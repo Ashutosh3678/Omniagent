@@ -1,8 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.env
+.env.local
+
+# Agent output
+desktop-agent/output/*.png
+
+# Flutter
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.packages
+mobile/build/
+mobile/.idea/
+mobile/*.iml
+
+# Node / frontend leftovers
 node_modules/
 .next/
 out/
 dist/
-.env
-.env.local
-*.log
+
+# OS / editor
 .DS_Store
+*.log

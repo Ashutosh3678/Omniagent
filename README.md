@@ -1,57 +1,78 @@
 # OmniAgent
 
-OmniAgent is an AI-powered autonomous computer interaction agent. A user will eventually give a natural-language instruction such as:
+OmniAgent is an autonomous computer-interaction agent. A later phase will accept
+a natural-language instruction such as:
 
 > Open Notepad and type Hello from OmniAgent.
 
-The agent will observe the computer screen, reason about the current state, perform actions, verify the result, and continue until the task is completed.
+The agent will observe the screen, take actions, verify the result, and continue
+until the task is done.
 
 ## Current phase
 
-**Phase 1: Project foundation and frontend dashboard prototype.**
+**Phase 1: Windows PC Agent (local automation only).**
 
-The Next.js dashboard is implemented with mock/local execution only. The FastAPI backend, agent engine, and Windows desktop agent are not implemented yet.
+A Python program on Windows can:
+
+1. Open Notepad.
+2. Type a message such as `Hello from OmniAgent`.
+3. Capture a screenshot of the screen.
+4. Verify that the task completed.
+5. Display **Success** or **Failed**.
+
+This phase does **not** include AI, a mobile app, a backend, a database, or
+remote connectivity. The goal is reliable local Windows automation first.
 
 ## Repository structure
 
 ```text
 omniagent/
-├── frontend/         Phase 1 Next.js dashboard
+├── desktop-agent/   Phase 1 Windows PC agent (Python)
+├── mobile/           Flutter UI (mock data)
 ├── backend/          FastAPI (later)
-├── desktop-agent/   Windows computer-control agent (later)
 ├── docker/           Deployment (later)
-└── docs/             Architecture and phase docs (later)
+└── docs/             Architecture docs (later)
+```
+
+## Run Phase 1
+
+```powershell
+cd desktop-agent
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python main.py
+```
+
+Full install notes and troubleshooting: [desktop-agent/README.md](desktop-agent/README.md).
+
+## Mobile UI
+
+Mock Flutter screens only. No backend or remote control.
+
+```powershell
+cd mobile
+flutter pub get
+flutter run
 ```
 
 ## Future architecture
 
 ```text
-Next.js
+Mobile / web client
     ↓
-FastAPI
+Backend
     ↓
-Agent Engine
+Agent engine
     ↓
-Desktop Agent
+Desktop agent
     ↓
-Windows Computer
+Windows PC
 ```
-
-## Frontend (Phase 1)
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Open [http://localhost:3000](http://localhost:3000).
 
 ## Roadmap
 
 | Phase | Scope |
 | --- | --- |
-| 1 | Project foundation and frontend UI with mock execution |
-| 2+ | FastAPI backend, agent engine, desktop agent, live screenshots, WebSockets, auth, Docker |
-
-Do not expect computer control, LLM calls, or live screenshots in this phase.
+| 1 | Local Windows agent: Notepad, typing, screenshot, verification |
+| 2+ | Agent engine, backend, remote connectivity, mobile app, AI |
