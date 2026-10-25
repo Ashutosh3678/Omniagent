@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 import 'models.dart';
@@ -72,7 +74,9 @@ class TaskTile extends StatelessWidget {
         style: Theme.of(context).textTheme.labelLarge?.copyWith(
               color: task.status == TaskStatus.failed
                   ? Theme.of(context).colorScheme.error
-                  : kSuccess,
+                  : task.status == TaskStatus.completed
+                      ? kSuccess
+                      : Theme.of(context).colorScheme.primary,
             ),
       ),
       onTap: onTap,
@@ -81,9 +85,10 @@ class TaskTile extends StatelessWidget {
 }
 
 class ScreenPreview extends StatelessWidget {
-  const ScreenPreview({super.key, this.height});
+  const ScreenPreview({super.key, this.height, this.bytes});
 
   final double? height;
+  final Uint8List? bytes;
 
   @override
   Widget build(BuildContext context) {
@@ -98,7 +103,10 @@ class ScreenPreview extends StatelessWidget {
         border: Border.all(color: scheme.outlineVariant),
       ),
       alignment: Alignment.topLeft,
-      child: Container(
+      clipBehavior: Clip.antiAlias,
+      child: bytes != null
+          ? Image.memory(bytes!, fit: BoxFit.cover, width: double.infinity, height: height)
+          : Container(
         width: 220,
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
         decoration: BoxDecoration(

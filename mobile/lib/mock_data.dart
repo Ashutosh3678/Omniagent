@@ -11,10 +11,10 @@ const PcDevice kOfficePc = PcDevice(
 const String kPairingCode = '482 193';
 
 const List<TaskItem> kHistory = [
-  TaskItem(title: 'Open Notepad', when: 'Today', status: TaskStatus.success, fileName: 'screenshot_190642.png'),
+  TaskItem(title: 'Open Notepad', when: 'Today', status: TaskStatus.completed, fileName: 'screenshot_190642.png'),
   TaskItem(title: 'Screenshot desktop', when: 'Yesterday', status: TaskStatus.failed),
-  TaskItem(title: 'Type message', when: 'Oct 24', status: TaskStatus.success),
-  TaskItem(title: 'Close Chrome', when: 'Oct 23', status: TaskStatus.success),
+  TaskItem(title: 'Type message', when: 'Oct 24', status: TaskStatus.completed),
+  TaskItem(title: 'Close Chrome', when: 'Oct 23', status: TaskStatus.completed),
 ];
 
 const List<String> kExecutionSteps = [

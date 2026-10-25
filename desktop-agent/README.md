@@ -4,8 +4,8 @@ Local Windows automation only. This program opens Notepad, types a message,
 captures a screenshot with MSS, verifies the result, and prints **Success**
 or **Failed**.
 
-It does not include AI, a mobile app, a backend, a database, or remote
-connectivity.
+Local Notepad automation still works offline. Phase 3 can also connect this
+agent to the FastAPI backend over a token-authenticated WebSocket.
 
 ## Requirements
 
@@ -45,6 +45,17 @@ Or:
 python -m omniagent_pc
 ```
 
+## Connect to the backend (Phase 3)
+
+Start the backend first, then:
+
+```powershell
+pip install -r requirements.txt
+python connect.py --api http://127.0.0.1:8000 --token dev-agent-token --name "Office PC"
+```
+
+The agent registers, stays connected, and only runs allowlisted Notepad tasks.
+
 Type a custom message:
 
 ```powershell
@@ -66,14 +77,16 @@ you can confirm the typed text yourself.
 
 ```text
 desktop-agent/
-├── main.py                 Entry point
+├── main.py                 Offline Phase 1 entry
+├── connect.py              Phase 3 backend connector
 ├── requirements.txt
 ├── output/                 Screenshots written here
 └── omniagent_pc/
     ├── actions.py          Open Notepad and type
     ├── screenshot.py       MSS screen capture
     ├── verify.py           Confirm text + screenshot
-    └── runner.py           Orchestrate and print status
+    ├── runner.py           Orchestrate and print status
+    └── client.py           Authenticated WebSocket client
 ```
 
 ## Troubleshooting

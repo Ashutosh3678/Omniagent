@@ -10,7 +10,7 @@ until the task is done.
 
 ## Current phase
 
-**Phase 1: Windows PC Agent (local automation only).**
+**Phase 3: FastAPI backend and agent communication.**
 
 A Python program on Windows can:
 
@@ -20,35 +20,58 @@ A Python program on Windows can:
 4. Verify that the task completed.
 5. Display **Success** or **Failed**.
 
-This phase does **not** include AI, a mobile app, a backend, a database, or
-remote connectivity. The goal is reliable local Windows automation first.
+The Flutter app submits an allowlisted Notepad task to FastAPI. The backend
+routes it over an authenticated WebSocket to the Windows PC agent. The agent
+runs the existing Notepad automation and returns status, logs, and a
+screenshot. Storage is in-memory. No Gemini or PostgreSQL yet.
 
 ## Repository structure
 
 ```text
 omniagent/
-├── desktop-agent/   Phase 1 Windows PC agent (Python)
-├── mobile/           Flutter UI (mock data)
-├── backend/          FastAPI (later)
+├── desktop-agent/   Windows PC agent (Python)
+├── mobile/           Flutter app
+├── backend/          FastAPI
 ├── docker/           Deployment (later)
 └── docs/             Architecture docs (later)
 ```
 
-## Run Phase 1
+## Start Phase 3
+
+Terminal 1 — backend:
 
 ```powershell
-cd desktop-agent
+cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python main.py
+uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Full install notes and troubleshooting: [desktop-agent/README.md](desktop-agent/README.md).
+Terminal 2 — Windows agent:
+
+```powershell
+cd desktop-agent
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python connect.py --api http://127.0.0.1:8000 --token dev-agent-token
+```
+
+Terminal 3 — mobile app:
+
+```powershell
+cd mobile
+flutter pub get
+flutter run --dart-define=API_BASE=http://127.0.0.1:8000 --dart-define=APP_TOKEN=dev-app-token
+```
+
+On an Android emulator use `API_BASE=http://10.0.2.2:8000`.
+
+Then tap **Run Task** with `Open Notepad and type Hello from OmniAgent`.
+
+Offline Notepad demo still works: `cd desktop-agent` then `python main.py`.
 
 ## Mobile UI
-
-Mock Flutter screens only. No backend or remote control.
 
 ```powershell
 cd mobile
@@ -75,4 +98,6 @@ Windows PC
 | Phase | Scope |
 | --- | --- |
 | 1 | Local Windows agent: Notepad, typing, screenshot, verification |
-| 2+ | Agent engine, backend, remote connectivity, mobile app, AI |
+| 2 | Flutter mobile UI (8 screens) |
+| 3 | FastAPI backend, authenticated agent WebSocket, task status |
+| 4+ | Gemini, PostgreSQL, richer actions |

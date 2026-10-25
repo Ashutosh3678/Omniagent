@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../api/client.dart';
 import '../mock_data.dart';
 import '../models.dart';
 import '../widgets.dart';
@@ -13,11 +14,26 @@ class HistoryScreen extends StatefulWidget {
 
 class _HistoryScreenState extends State<HistoryScreen> {
   String _filter = 'All';
+  List<TaskItem> _items = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final tasks = await omniApi.listTasks();
+      if (mounted) setState(() => _items = tasks);
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) {
-    final items = kHistory.where((task) {
-      if (_filter == 'Success') return task.status == TaskStatus.success;
+    final source = _items.isEmpty ? kHistory : _items;
+    final items = source.where((task) {
+      if (_filter == 'Success') return task.status == TaskStatus.completed;
       if (_filter == 'Failed') return task.status == TaskStatus.failed;
       return true;
     }).toList();
