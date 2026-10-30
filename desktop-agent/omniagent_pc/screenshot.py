@@ -25,7 +25,7 @@ def capture_screen(output_dir: Path | None = None) -> tuple[Path | None, StepRes
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         path = destination / f"screenshot_{stamp}.png"
 
-        with mss.mss() as sct:
+        with mss.MSS() as sct:
             if len(sct.monitors) < 2:
                 return None, StepResult(
                     "Capture screenshot",
@@ -83,7 +83,7 @@ def capture_jpeg(max_width: int = 960, quality: int = 70) -> bytes | None:
 
     from PIL import Image
 
-    with mss.mss() as sct:
+    with mss.MSS() as sct:
         if len(sct.monitors) < 2:
             return None
         shot = sct.grab(sct.monitors[1])

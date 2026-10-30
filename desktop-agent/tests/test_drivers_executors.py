@@ -92,7 +92,7 @@ class FakeDriver:
 
     def click(self, target):
         self.calls.append(("click", target))
-        return Result(target != "missing", "clicked" if target != "missing" else "not found")
+        return Result(target != "missing", "clicked" if target != "missing" else "not found", retry=True)
 
     def scroll(self, direction, amount):
         self.calls.append(("scroll", direction, amount))
@@ -219,3 +219,78 @@ def test_capabilities_only_list_what_is_installed(monkeypatch) -> None:
     assert set(executors.build_executors()) == {"open_app", "type_text", "press_key", "click", "wait", "screenshot", "browser_navigate"}
     monkeypatch.setattr(executors, "_installed", lambda module: False)
     assert "scroll" not in executors.build_executors() and "browser_navigate" not in executors.build_executors()
+
+
+def test_a_typing_failure_that_may_have_typed_something_is_never_repeated() -> None:
+    class Flaky(FakeDriver):
+        def type_text(self, text):
+            self.calls.append(("type", text))
+            return Result(False, "UIA error after some keys")  # retry defaults to False
+
+    driver = Flaky()
+    outcome = run_plan(
+        [step(0, type="type_text", text="Hello")],
+        executors.build_executors(), RunContext(driver=driver), lambda *a, **k: None, sleep=lambda s: None,
+    )  # fmt: skip
+    assert outcome.status == "failed"
+    assert driver.calls == [("type", "Hello")]  # exactly once
+
+
+def test_a_failure_that_did_nothing_can_be_retried() -> None:
+    class NotReady(FakeDriver):
+        def type_text(self, text):
+            self.calls.append(("type", text))
+            return Result(False, "Could not find Notepad's text area", retry=True)
+
+    driver = NotReady()
+    run_plan(
+        [step(0, type="type_text", text="Hello")],
+        executors.build_executors(), RunContext(driver=driver), lambda *a, **k: None, sleep=lambda s: None,
+    )  # fmt: skip
+    assert len(driver.calls) == 3
+
+
+# --- Notepad opens on a blank page (needs the Windows libraries)
+class TestBlankPage:
+    @pytest.fixture
+    def fake_actions(self, monkeypatch):
+        pytest.importorskip("pywinauto")
+        from omniagent_pc import actions
+
+        state = {"text": "", "keys": []}
+
+        class Edit:
+            def type_keys(self, keys, pause=0.0):
+                state["keys"].append(keys)
+                if keys == "^n":
+                    state["text"] = state.get("after_new", "")
+
+        monkeypatch.setattr(actions, "read_notepad_text", lambda session: state["text"])
+        monkeypatch.setattr(actions, "_find_document_control", lambda window, backend: state.get("edit", Edit()))
+        monkeypatch.setattr("omniagent_pc.drivers.time.sleep", lambda s: None)
+        session = SimpleNamespace(spec=lambda: None, backend="uia")
+        return state, session, Edit
+
+    def test_an_empty_notepad_is_used_as_it_is(self, fake_actions) -> None:
+        state, session, _ = fake_actions
+        assert NotepadDriver(session)._ensure_blank_page().ok and state["keys"] == []
+
+    def test_restored_text_is_left_alone_and_a_new_tab_is_used(self, fake_actions) -> None:
+        state, session, _ = fake_actions
+        state["text"], state["after_new"] = "someone's old unsaved notes", ""
+        assert NotepadDriver(session)._ensure_blank_page().ok
+        assert state["keys"] == ["^n"]  # opened a new page; never selected or deleted anything
+
+    def test_it_refuses_to_write_if_a_blank_page_cannot_be_had(self, fake_actions) -> None:
+        state, session, _ = fake_actions
+        state["text"], state["after_new"] = "old notes", "old notes"
+        result = NotepadDriver(session)._ensure_blank_page()
+        assert not result.ok and "blank page" in result.detail
+
+    def test_it_refuses_if_it_cannot_find_the_text_area(self, fake_actions, monkeypatch) -> None:
+        from omniagent_pc import actions
+
+        state, session, _ = fake_actions
+        state["text"] = "old notes"
+        monkeypatch.setattr(actions, "_find_document_control", lambda window, backend: None)
+        assert not NotepadDriver(session)._ensure_blank_page().ok

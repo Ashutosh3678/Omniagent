@@ -4,7 +4,8 @@ Pure logic: no UI libraries are imported here. Drivers, executors and the clock 
 injected, so the whole loop is tested without a desktop.
 
 Per step:
-  1. Act. If the executor reports failure (nothing happened), act again, up to MAX_ATTEMPTS.
+  1. Act. If the executor reports failure and says nothing happened (retry), act again, up to
+     MAX_ATTEMPTS. A failure that may have partly happened is not repeated.
   2. Observe and verify. If the step says what should now be on screen, compare it with
      what is on screen using local hashed embeddings (threshold VERIFY_THRESHOLD). If it does
      not match, observe again after a short wait, up to MAX_ATTEMPTS looks. The action is
@@ -35,6 +36,9 @@ class StepOutcome:
     # What should now be visible. None means there is nothing to compare, so the step is
     # confirmed by the executor alone.
     expected: str | None = None
+    # False when a failed action may have partly happened (some keys typed): acting again
+    # could do it twice, so the step fails instead.
+    retry: bool = True
 
 
 @dataclass
@@ -141,7 +145,7 @@ def _run_step(
         except Exception as exc:  # noqa: BLE001 - UI automation fails in many ways
             logger.exception("Step %s crashed", action.get("type"))
             outcome = StepOutcome(False, f"Unexpected error: {exc}")
-        if outcome.ok:
+        if outcome.ok or not outcome.retry:
             break
         if attempt < MAX_ATTEMPTS and not should_stop():
             sleep(SETTLE_SECONDS * attempt)

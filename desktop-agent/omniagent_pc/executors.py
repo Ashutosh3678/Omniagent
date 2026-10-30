@@ -13,7 +13,7 @@ from omniagent_pc.plan_runner import Executor, RunContext, StepOutcome
 
 
 def _outcome(result: Result, expected: str | None = None) -> StepOutcome:
-    return StepOutcome(result.ok, result.detail, expected if result.ok else None)
+    return StepOutcome(result.ok, result.detail, expected if result.ok else None, retry=result.retry)
 
 
 def _need_app(ctx: RunContext) -> StepOutcome | None:

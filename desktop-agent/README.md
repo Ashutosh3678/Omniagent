@@ -75,6 +75,11 @@ For every step the agent acts, looks at the screen, and checks the result:
 
 No model or network is used for verification.
 
+Windows 11 Notepad reopens with the last session's unsaved text. The agent never types over
+it: it starts a new tab, and refuses to continue if it cannot get a blank page.
+
+If typing fails after some keys may already have gone in, the step is not repeated.
+
 ### What this PC can do
 
 On connect the agent tells the backend which actions it can run, and only those are planned

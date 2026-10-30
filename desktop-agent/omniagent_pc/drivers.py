@@ -11,6 +11,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
@@ -24,6 +25,8 @@ logger = logging.getLogger(__name__)
 class Result:
     ok: bool
     detail: str = ""
+    # True only when a failure means nothing happened, so trying again cannot do it twice.
+    retry: bool = False
 
 
 class DriverUnavailable(Exception):
@@ -45,8 +48,29 @@ class NotepadDriver:
         from omniagent_pc import actions
 
         session, result = actions.launch_notepad()
-        driver = cls(session) if session is not None else None
-        return driver, Result(result.status == "Success", result.detail)
+        if session is None:
+            return None, Result(False, result.detail)
+        driver = cls(session)
+        blank = driver._ensure_blank_page()
+        if not blank.ok:
+            return None, blank
+        return driver, Result(True, result.detail)
+
+    def _ensure_blank_page(self) -> Result:
+        """Windows 11 Notepad brings back the last session's unsaved text. Never type into or over
+        someone's old text: start a new tab instead, and give up if that page is not blank."""
+        from omniagent_pc import actions
+
+        if not actions.read_notepad_text(self.session).strip():
+            return Result(True)
+        edit = actions._find_document_control(self.session.spec(), self.session.backend)
+        if edit is None:
+            return Result(False, "Notepad opened with older text and its text area could not be found")
+        edit.type_keys("^n", pause=0.05)
+        time.sleep(0.8)
+        if actions.read_notepad_text(self.session).strip():
+            return Result(False, "Notepad opened with older unsaved text and a blank page could not be started")
+        return Result(True)
 
     def observe_text(self) -> str:
         from omniagent_pc import actions
@@ -62,13 +86,14 @@ class NotepadDriver:
         from omniagent_pc import actions
 
         _, result = actions.append_text(self.session, text)
-        return Result(result.status == "Success", result.detail)
+        # Only "no text area" means nothing was typed; any other failure may have typed some.
+        return Result(result.status == "Success", result.detail, retry="text area" in result.detail)
 
     def press_key(self, key: str, modifiers: list[str]) -> Result:
         from omniagent_pc import actions
 
         result = actions.press_key(self.session, key, modifiers)
-        return Result(result.status == "Success", result.detail)
+        return Result(result.status == "Success", result.detail, retry="text area" in result.detail)
 
     def click(self, target: str) -> Result:
         """Clicks the control in the Notepad window whose label best matches `target`."""
@@ -90,7 +115,7 @@ class NotepadDriver:
                 if score > best_score:
                     best_score, best = score, (control, label)
             if best is None or best_score < VERIFY_THRESHOLD:
-                return Result(False, f"Could not find {target!r} in Notepad")
+                return Result(False, f"Could not find {target!r} in Notepad", retry=True)
             best[0].click_input()
             return Result(True, f"Clicked {best[1]!r}")
         except Exception as exc:  # noqa: BLE001
@@ -185,7 +210,7 @@ class BrowserDriver:
             self.page.goto(url, timeout=20_000, wait_until="domcontentloaded")
             return Result(True, f"Opened {page_host(self.page.url) or url}")
         except Exception as exc:  # noqa: BLE001
-            return Result(False, f"Could not open {url}: {str(exc).splitlines()[0]}")
+            return Result(False, f"Could not open {url}: {str(exc).splitlines()[0]}", retry=True)
 
     def observe_text(self) -> str:
         try:
@@ -223,7 +248,7 @@ class BrowserDriver:
                     return Result(True, f"Clicked {target!r}")
             except Exception as exc:  # noqa: BLE001
                 logger.debug("Click candidate failed: %s", exc)
-        return Result(False, f"Could not find {target!r} on the page")
+        return Result(False, f"Could not find {target!r} on the page", retry=True)
 
     def scroll(self, direction: str, amount: int) -> Result:
         try:
