@@ -9,13 +9,14 @@ from starlette.websockets import WebSocketDisconnect
 
 from app.main import app
 from app.models import utcnow
-from app.ratelimit import pairing_limiter
+from app.ratelimit import pairing_limiter, planner_limiter
 from app.store import store
 
 
 def setup_function() -> None:
     store.reset()
     pairing_limiter.reset()
+    planner_limiter.reset()
 
 
 def _signup(client: TestClient, email: str = "alex@example.com", password: str = "correct-horse") -> dict:
@@ -479,7 +480,7 @@ def test_every_dispatch_decision_is_audited() -> None:
             ws.receive_json()
         events = client.get("/api/v1/audit", headers=user).json()
         outcomes = [(e["event"], e["decision"], e["reason"]) for e in events if e["event"].startswith("dispatch")]
-        assert ("dispatch_permitted", "permit", "1 step(s)") in outcomes
+        assert ("dispatch_permitted", "permit", "1 step(s) via rules") in outcomes
         assert ("dispatch_denied", "deny", "invalid_instruction") in outcomes
         assert ("dispatch_denied", "deny", "device_offline") in outcomes
         permitted = next(e for e in events if e["event"] == "dispatch_permitted")
@@ -563,23 +564,18 @@ def test_agent_cannot_update_another_agents_task() -> None:
             assert fetched["steps"][0]["status"] == "pending"
 
 
-def test_held_back_steps_are_audited_and_result_is_partial(monkeypatch) -> None:
-    from app import actions
-
-    monkeypatch.setattr(
-        "app.routers.tasks.plan_from_instruction",
-        lambda _text: [
-            {"action": {"type": "open_app", "app": "notepad"}, "confidence": 0.9},
-            {"action": {"type": "click", "target": "Save"}, "confidence": 0.4},
-            {"action": {"type": "type_text", "text": "later"}},
-        ],
-    )
+def test_held_back_steps_are_audited_and_result_is_partial() -> None:
+    plan = [
+        {"action": {"type": "open_app", "app": "notepad"}, "confidence": 0.9},
+        {"action": {"type": "click", "target": "Save"}, "confidence": 0.4},
+        {"action": {"type": "type_text", "text": "later"}},
+    ]
     with TestClient(app) as client:
         user = _signup(client)
         agent_id, device = _register(client, user)
         with _ws(client, agent_id, device) as ws:
             ws.receive_json()
-            created = client.post("/api/v1/tasks", headers=user, json={"instruction": "anything"})
+            created = client.post("/api/v1/tasks", headers=user, json={"instruction": "anything", "plan": plan})
             assert created.status_code == 201
             body = created.json()
             assert [st["status"] for st in body["steps"]] == ["pending", "held_back", "held_back"]
@@ -599,18 +595,282 @@ def test_held_back_steps_are_audited_and_result_is_partial(monkeypatch) -> None:
         assert sorted(held) == ["step 2: not_supported", "step 3: blocked_by_earlier_step"]
 
 
-def test_plan_with_nothing_runnable_is_refused_and_creates_no_task(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "app.routers.tasks.plan_from_instruction",
-        lambda _text: [{"action": {"type": "click", "target": "Save"}}],
+def test_plan_with_nothing_runnable_is_refused_and_creates_no_task() -> None:
+    plan = [{"action": {"type": "click", "target": "Save"}}]
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            response = client.post("/api/v1/tasks", headers=user, json={"instruction": "anything", "plan": plan})
+            assert response.status_code == 422
+            assert client.get("/api/v1/tasks", headers=user).json() == []
+            events = client.get("/api/v1/audit", headers=user).json()
+            assert events[0]["event"] == "dispatch_denied" and events[0]["reason"] == "not_supported"
+
+
+# planner integration (Gemini is always faked here)
+class FakePlanner:
+    name = "gemini"
+
+    def __init__(self, steps=None, note="", error: Exception | None = None) -> None:
+        self.steps = steps or []
+        self.note = note
+        self.error = error
+        self.calls: list[tuple[str, list[str]]] = []
+
+    async def plan(self, instruction: str, permitted_apps: list[str]):
+        from app.planner import PlannerResult
+
+        self.calls.append((instruction, list(permitted_apps)))
+        if self.error:
+            raise self.error
+        return PlannerResult(steps=self.steps, planner="gemini", note=self.note)
+
+
+def _use(monkeypatch, fake: FakePlanner | None) -> None:
+    monkeypatch.setattr("app.planner.get_planner", lambda: fake)
+
+
+COMPOSE = [
+    {"action": {"type": "open_app", "app": "notepad"}, "confidence": 0.95},
+    {"action": {"type": "type_text", "text": "Dear team"}, "confidence": 0.9},
+    {"action": {"type": "press_key", "key": "enter"}, "confidence": 0.8},
+    {"action": {"type": "type_text", "text": "Thanks"}, "confidence": 0.9},
+]
+
+
+def test_gemini_plan_runs_as_a_multi_step_task(monkeypatch) -> None:
+    fake = FakePlanner(COMPOSE)
+    _use(monkeypatch, fake)
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            created = client.post(
+                "/api/v1/tasks", headers=user, json={"instruction": "write a short thank-you note in notepad"}
+            )
+            assert created.status_code == 201, created.text
+            assert [s["name"] for s in created.json()["steps"]][:2] == ["Open Notepad", "Type \u201cDear team\u201d"]
+            inbound = ws.receive_json()
+            assert [s["action"]["type"] for s in inbound["plan"]] == ["open_app", "type_text", "press_key", "type_text"]
+            assert fake.calls == [("write a short thank-you note in notepad", ["notepad"])]
+            assert created.json()["confidence"] == pytest.approx(0.89, abs=0.01)
+        reasons = [(e["event"], e["reason"]) for e in client.get("/api/v1/audit", headers=user).json()]
+        assert ("plan_created", "gemini: 4 step(s)") in reasons
+        assert ("dispatch_permitted", "4 step(s) via gemini") in reasons
+
+
+def test_exact_rule_phrases_never_call_the_llm(monkeypatch) -> None:
+    fake = FakePlanner(COMPOSE)
+    _use(monkeypatch, fake)
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            assert client.post("/api/v1/tasks", headers=user, json={"instruction": "open notepad"}).status_code == 201
+            assert fake.calls == []
+
+
+def test_model_output_cannot_exceed_the_devices_scope(monkeypatch) -> None:
+    _use(monkeypatch, FakePlanner([{"action": {"type": "open_app", "app": "chrome"}, "confidence": 1}]))
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            response = client.post("/api/v1/tasks", headers=user, json={"instruction": "open my browser"})
+            assert response.status_code == 403
+            assert client.get("/api/v1/tasks", headers=user).json() == []
+            assert client.get("/api/v1/audit", headers=user).json()[0]["reason"] == "unknown_app"
+
+
+def test_hostile_model_output_is_held_back_not_run(monkeypatch) -> None:
+    _use(
+        monkeypatch,
+        FakePlanner(
+            [
+                {"action": {"type": "open_app", "app": "notepad"}, "confidence": 1},
+                {"action": {"type": "shell", "command": "del /s /q c:\\"}, "confidence": 1},
+                {"action": {"type": "type_text", "text": "after"}, "confidence": 1},
+            ]
+        ),
     )
     with TestClient(app) as client:
         user = _signup(client)
         agent_id, device = _register(client, user)
         with _ws(client, agent_id, device) as ws:
             ws.receive_json()
-            response = client.post("/api/v1/tasks", headers=user, json={"instruction": "anything"})
+            created = client.post("/api/v1/tasks", headers=user, json={"instruction": "tidy my disk"})
+            assert created.status_code == 201
+            assert [h["reason"] for h in created.json()["held_back"]] == ["unknown_action", "blocked_by_earlier_step"]
+            assert [s["action"]["type"] for s in ws.receive_json()["plan"]] == ["open_app"]
+
+
+def test_planner_declining_is_a_clear_refusal(monkeypatch) -> None:
+    _use(monkeypatch, FakePlanner([], note="I can only use Notepad here"))
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            response = client.post("/api/v1/tasks", headers=user, json={"instruction": "book a flight"})
             assert response.status_code == 422
+            assert response.json()["detail"] == "I can only use Notepad here"
             assert client.get("/api/v1/tasks", headers=user).json() == []
-            events = client.get("/api/v1/audit", headers=user).json()
-            assert events[0]["event"] == "dispatch_denied" and events[0]["reason"] == "not_supported"
+
+
+def test_planner_outage_is_a_503_and_creates_no_task(monkeypatch) -> None:
+    from app.planner import PlannerError
+
+    _use(monkeypatch, FakePlanner(error=PlannerError("down")))
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            response = client.post("/api/v1/tasks", headers=user, json={"instruction": "write a poem"})
+            assert response.status_code == 503
+            assert "down" not in response.text
+            assert client.get("/api/v1/audit", headers=user).json()[0]["reason"] == "planner_failed"
+            # The rule phrases still work while the planner is down.
+            assert client.post("/api/v1/tasks", headers=user, json={"instruction": "open notepad"}).status_code == 201
+
+
+def test_without_a_key_unknown_instructions_are_rejected_as_before(monkeypatch) -> None:
+    _use(monkeypatch, None)
+    with TestClient(app) as client:
+        user = _signup(client)
+        response = client.post("/api/v1/tasks", headers=user, json={"instruction": "write a poem"})
+        assert response.status_code == 400
+
+
+def test_planner_calls_are_rate_limited_per_user(monkeypatch) -> None:
+    from app.ratelimit import planner_limiter
+
+    monkeypatch.setattr(planner_limiter, "max_events", 2)
+    _use(monkeypatch, FakePlanner(COMPOSE))
+    with TestClient(app) as client:
+        alice = _signup(client, "alice@example.com")
+        bob = _signup(client, "bob@example.com")
+        agent_id, _ = _register(client, alice)
+        _register(client, bob)
+        for _ in range(2):
+            assert client.post("/api/v1/plans/preview", headers=alice, json={"instruction": "write a note"}).status_code == 200
+        assert client.post("/api/v1/plans/preview", headers=alice, json={"instruction": "write a note"}).status_code == 429
+        assert client.post("/api/v1/plans/preview", headers=bob, json={"instruction": "write a note"}).status_code == 200
+
+
+# preview and confirm
+def test_preview_shows_the_plan_without_running_anything(monkeypatch) -> None:
+    fake = FakePlanner(COMPOSE)
+    _use(monkeypatch, fake)
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        # The PC is offline: previewing must still work and must not dispatch.
+        preview = client.post("/api/v1/plans/preview", headers=user, json={"instruction": "write a thank-you note"})
+        assert preview.status_code == 200, preview.text
+        body = preview.json()
+        assert body["planner"] == "gemini" and body["runnable"] is True and body["low_confidence"] is False
+        assert [s["description"] for s in body["steps"]][:2] == ["Open Notepad", "Type \u201cDear team\u201d"]
+        assert client.get("/api/v1/tasks", headers=user).json() == []
+
+        # Confirming sends the previewed plan back; the planner is not asked again.
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            created = client.post(
+                "/api/v1/tasks", headers=user, json={"instruction": "write a thank-you note", "plan": body["plan"]}
+            )
+            assert created.status_code == 201
+            assert len(ws.receive_json()["plan"]) == 4
+        assert len(fake.calls) == 1
+        events = [e["event"] for e in client.get("/api/v1/audit", headers=user).json()]
+        assert "plan_previewed" in events
+
+
+def test_preview_flags_low_confidence_and_held_back_steps(monkeypatch) -> None:
+    _use(
+        monkeypatch,
+        FakePlanner(
+            [
+                {"action": {"type": "open_app", "app": "notepad"}, "confidence": 0.4},
+                {"action": {"type": "click", "target": "File"}, "confidence": 0.3},
+            ]
+        ),
+    )
+    with TestClient(app) as client:
+        user = _signup(client)
+        _register(client, user)
+        body = client.post("/api/v1/plans/preview", headers=user, json={"instruction": "open the file menu"}).json()
+        assert body["runnable"] is True and body["low_confidence"] is True
+        assert [h["reason"] for h in body["held_back"]] == ["not_supported"]
+        assert len(body["plan"]) == 2
+
+
+def test_preview_of_a_declined_request_is_not_runnable(monkeypatch) -> None:
+    _use(monkeypatch, FakePlanner([], note="Cannot do that"))
+    with TestClient(app) as client:
+        user = _signup(client)
+        _register(client, user)
+        body = client.post("/api/v1/plans/preview", headers=user, json={"instruction": "launch a rocket"}).json()
+        assert body["runnable"] is False and body["note"] == "Cannot do that" and body["steps"] == []
+
+
+def test_preview_uses_rules_for_exact_phrases(monkeypatch) -> None:
+    fake = FakePlanner(COMPOSE)
+    _use(monkeypatch, fake)
+    with TestClient(app) as client:
+        user = _signup(client)
+        _register(client, user)
+        body = client.post(
+            "/api/v1/plans/preview", headers=user, json={"instruction": "Open Notepad and type hi"}
+        ).json()
+        assert body["planner"] == "rules" and len(body["steps"]) == 2
+        assert fake.calls == []
+
+
+def test_preview_device_rules(monkeypatch) -> None:
+    _use(monkeypatch, FakePlanner(COMPOSE))
+    with TestClient(app) as client:
+        alice = _signup(client, "alice@example.com")
+        bob = _signup(client, "bob@example.com")
+        body = {"instruction": "write a note"}
+        assert client.post("/api/v1/plans/preview", json=body).status_code == 401
+        assert client.post("/api/v1/plans/preview", headers=alice, json=body).status_code == 503  # nothing paired
+        first, _ = _register(client, alice)
+        assert client.post("/api/v1/plans/preview", headers=alice, json=body).status_code == 200
+        _register(client, alice)
+        assert client.post("/api/v1/plans/preview", headers=alice, json=body).status_code == 409  # which PC?
+        assert client.post("/api/v1/plans/preview", headers=bob, json={**body, "agent_id": first}).status_code == 404
+        client.post(f"/api/v1/agents/{first}/revoke", headers=alice)
+        assert client.post("/api/v1/plans/preview", headers=alice, json={**body, "agent_id": first}).status_code == 403
+
+
+def test_preview_respects_the_devices_scope(monkeypatch) -> None:
+    fake = FakePlanner(COMPOSE)
+    _use(monkeypatch, fake)
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, _ = _register(client, user)
+        client.patch(f"/api/v1/agents/{agent_id}", headers=user, json={"permitted_apps": []})
+        body = client.post("/api/v1/plans/preview", headers=user, json={"instruction": "write a note"}).json()
+        assert body["runnable"] is False
+        assert body["held_back"][0]["reason"] == "app_not_permitted"
+        assert fake.calls == [("write a note", [])]
+
+
+def test_client_supplied_plans_are_validated_like_any_other() -> None:
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            evil = [{"action": {"type": "open_app", "app": "cmd"}}]
+            assert client.post("/api/v1/tasks", headers=user, json={"instruction": "x", "plan": evil}).status_code == 403
+            assert client.post("/api/v1/tasks", headers=user, json={"instruction": "x", "plan": []}).status_code == 422
+            too_many = [{"action": {"type": "wait", "seconds": 1}}] * 51
+            assert client.post("/api/v1/tasks", headers=user, json={"instruction": "x", "plan": too_many}).status_code == 422
+            assert client.get("/api/v1/tasks", headers=user).json() == []

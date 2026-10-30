@@ -57,6 +57,26 @@ def authorize_device(user: User, agent_id: str | None) -> Agent:
     return agent
 
 
+def resolve_device_for_preview(user: User, agent_id: str | None) -> Agent:
+    """The PC a plan is made for. It need not be online: previewing sends nothing."""
+    if agent_id:
+        agent = store.get_agent(agent_id, user.id)
+        if agent is None:
+            deny(status.HTTP_404_NOT_FOUND, "unknown_device", "PC not found", user=user)
+    else:
+        active = [a for a in store.list_agents(user.id) if a.status == "active" and not a.expired]
+        if not active:
+            deny(status.HTTP_503_SERVICE_UNAVAILABLE, "no_device", "Pair a PC first", user=user)
+        if len(active) > 1:
+            deny(status.HTTP_409_CONFLICT, "ambiguous_device", "Choose which PC to use", user=user)
+        agent = active[0]
+    if agent.status != "active":
+        deny(status.HTTP_403_FORBIDDEN, "device_revoked", "This PC has been removed", user=user, agent=agent)
+    if agent.expired:
+        deny(status.HTTP_403_FORBIDDEN, "device_expired", "This PC's access has expired", user=user, agent=agent)
+    return agent
+
+
 def authorize_plan(user: User, agent: Agent, raw_steps: list[Any]) -> PlanVerdict:
     """Validates the plan against this PC's app scope.
 

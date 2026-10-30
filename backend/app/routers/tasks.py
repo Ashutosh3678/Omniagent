@@ -6,10 +6,17 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
-from app.actions import InvalidActionError, plan_from_instruction
 from app.auth import get_current_user
 from app.dispatch import authorize_device, authorize_plan, deny
 from app.models import CreateTaskRequest, HeldBack, Step, Task, TaskPublic, User
+from app.planning import (
+    llm_available,
+    llm_plan,
+    record_planned,
+    rules_plan,
+    supplied_plan,
+    unsupported_message,
+)
 from app.store import store
 from app.ws import fail_if_timed_out, send_task
 
@@ -26,13 +33,24 @@ async def create_task(
     body: CreateTaskRequest,
     user: User = Depends(get_current_user),
 ) -> TaskPublic:
-    try:
-        raw_steps = plan_from_instruction(body.instruction)
-    except InvalidActionError as exc:
-        deny(status.HTTP_400_BAD_REQUEST, "invalid_instruction", str(exc), user=user)
+    # A previewed plan skips planning but is validated exactly like any other.
+    result = supplied_plan(body.plan) if body.plan is not None else rules_plan(body.instruction)
+    if result is None and not llm_available():
+        deny(status.HTTP_400_BAD_REQUEST, "invalid_instruction", unsupported_message(), user=user)
 
     agent = authorize_device(user, body.agent_id)
-    verdict = authorize_plan(user, agent, raw_steps)
+    if result is None:
+        result = await llm_plan(user, agent, body.instruction)
+        record_planned(user, agent, result, "plan_created")
+        if not result.steps:
+            deny(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "planner_declined",
+                result.note or "That is not something this PC can do",
+                user=user,
+                agent=agent,
+            )
+    verdict = authorize_plan(user, agent, result.steps)
 
     task = Task(
         id=store.new_id(),
@@ -61,7 +79,7 @@ async def create_task(
     store.add_audit(
         "dispatch_permitted",
         "permit",
-        f"{len(task.plan)} step(s)",
+        f"{len(task.plan)} step(s) via {result.planner}",
         user_id=user.id,
         agent_id=agent.id,
         task_id=task.id,

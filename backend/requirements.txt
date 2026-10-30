@@ -10,3 +10,4 @@ psycopg[binary]==3.3.6
 argon2-cffi==25.1.0
 PyJWT==2.15.1
 python-multipart==0.0.32
+python-dotenv==1.2.4

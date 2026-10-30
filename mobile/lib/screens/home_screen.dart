@@ -4,6 +4,7 @@ import '../api/client.dart';
 import '../mock_data.dart';
 import '../models.dart';
 import '../widgets.dart';
+import 'plan_sheet.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -64,7 +65,16 @@ class _HomeScreenState extends State<HomeScreen> {
     if (instruction.isEmpty || _busy) return;
     setState(() => _busy = true);
     try {
-      final task = await omniApi.createTask(instruction, agentId: _device?.id);
+      // Plans made by the AI are shown first; plain "open notepad..." phrases run straight away.
+      final preview = await omniApi.previewPlan(instruction, agentId: _device?.id);
+      if (!mounted) return;
+      List<dynamic>? confirmed;
+      if (preview.planner != 'rules') {
+        final ok = await showPlanSheet(context, preview);
+        if (ok != true || !mounted) return;
+        confirmed = preview.plan;
+      }
+      final task = await omniApi.createTask(instruction, agentId: _device?.id, plan: confirmed);
       if (!mounted) return;
       await Navigator.of(context).pushNamed('/execution', arguments: task);
       await _refresh();

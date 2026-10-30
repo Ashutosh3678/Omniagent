@@ -91,6 +91,70 @@ class PcDevice {
   bool get usable => online && !revoked && !expired;
 }
 
+class PreviewStep {
+  const PreviewStep({required this.description, required this.confidence});
+
+  final String description;
+  final double confidence;
+}
+
+class HeldStep {
+  const HeldStep({required this.reason, required this.detail});
+
+  final String reason;
+  final String detail;
+}
+
+/// A plan the backend has made and checked but not run yet.
+class PlanPreview {
+  const PlanPreview({
+    required this.planner,
+    required this.steps,
+    required this.heldBack,
+    required this.runnable,
+    required this.lowConfidence,
+    required this.note,
+    required this.plan,
+    this.confidence,
+  });
+
+  final String planner;
+  final List<PreviewStep> steps;
+  final List<HeldStep> heldBack;
+  final bool runnable;
+  final bool lowConfidence;
+  final String note;
+  final double? confidence;
+
+  /// The raw plan, sent back unchanged when the user confirms.
+  final List<dynamic> plan;
+
+  factory PlanPreview.fromJson(Map<String, dynamic> json) {
+    return PlanPreview(
+      planner: json['planner'] as String? ?? '',
+      steps: [
+        for (final step in (json['steps'] as List<dynamic>? ?? const []))
+          PreviewStep(
+            description: (step as Map<String, dynamic>)['description'] as String? ?? '',
+            confidence: (step['confidence'] as num?)?.toDouble() ?? 1,
+          ),
+      ],
+      heldBack: [
+        for (final held in (json['held_back'] as List<dynamic>? ?? const []))
+          HeldStep(
+            reason: (held as Map<String, dynamic>)['reason'] as String? ?? '',
+            detail: held['detail'] as String? ?? '',
+          ),
+      ],
+      runnable: json['runnable'] as bool? ?? false,
+      lowConfidence: json['low_confidence'] as bool? ?? false,
+      note: json['note'] as String? ?? '',
+      confidence: (json['confidence'] as num?)?.toDouble(),
+      plan: json['plan'] as List<dynamic>? ?? const [],
+    );
+  }
+}
+
 class PairingCode {
   const PairingCode({required this.code, required this.expiresAt});
 

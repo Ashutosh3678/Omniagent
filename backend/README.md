@@ -56,6 +56,31 @@ WebSocket messages: the backend sends `task` with `plan`; the agent replies with
 `step` (`index`, `status`: running/success/failed/skipped, `detail`) and `result`
 (`completed`/`partial`/`failed`).
 
+## Planner (Gemini)
+
+`POST /api/v1/tasks` and `POST /api/v1/plans/preview` turn an instruction into a plan:
+
+1. The built-in rules handle exact phrases such as "Open Notepad and type ..." (no AI call).
+2. Anything else goes to Gemini (`app/planner.py`) when a key is configured. The request
+   asks for structured JSON, temperature 0, and lists only the actions and apps this PC may
+   use. The user's text is sent as data, never as part of the system prompt.
+3. Whatever the planner returns is untrusted and goes through the same validator as every
+   other plan. A planner failure is a 503 and never falls back to guessing; Gemini calls
+   are limited to 20 per user per minute.
+
+`POST /api/v1/plans/preview` plans and validates without running anything and returns the
+steps, held-back steps, confidence and a `low_confidence` flag. Send its `plan` back in
+`POST /api/v1/tasks` to run exactly what was previewed (it is validated again).
+
+Set the key in the environment or in an untracked `backend/.env` (or repo-root `.env`):
+
+```
+OMNIAGENT_GEMINI_API_KEY=your-key
+OMNIAGENT_GEMINI_MODEL=gemini-2.5-flash   # optional
+```
+
+Your instruction text is sent to Google's Gemini API when the rules do not match it.
+
 ## Dispatch rules
 
 A task is sent only if every check passes, and the first failure is refused and

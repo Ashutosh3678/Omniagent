@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import agents, audit, auth, tasks
+from app.routers import agents, audit, auth, plans, tasks
 from app.store import store
 from app.ws import router as ws_router
 
@@ -28,6 +28,7 @@ app.add_middleware(
 )
 app.include_router(auth.router)
 app.include_router(agents.router)
+app.include_router(plans.router)
 app.include_router(tasks.router)
 app.include_router(audit.router)
 app.include_router(ws_router)

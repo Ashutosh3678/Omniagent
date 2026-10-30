@@ -82,11 +82,21 @@ class OmniApi {
     await _send('POST', '/api/v1/agents/$id/revoke', const {});
   }
 
-  Future<TaskItem> createTask(String instruction, {String? agentId}) async {
+  Future<PlanPreview> previewPlan(String instruction, {String? agentId}) async {
+    final body = await _send(
+      'POST',
+      '/api/v1/plans/preview',
+      {'instruction': instruction, 'agent_id': ?agentId},
+    );
+    return PlanPreview.fromJson(body as Map<String, dynamic>);
+  }
+
+  /// Pass [plan] to run exactly a plan the user already previewed.
+  Future<TaskItem> createTask(String instruction, {String? agentId, List<dynamic>? plan}) async {
     final body = await _send(
       'POST',
       '/api/v1/tasks',
-      {'instruction': instruction, 'agent_id': ?agentId},
+      {'instruction': instruction, 'agent_id': ?agentId, 'plan': ?plan},
     );
     return TaskItem.fromJson(body as Map<String, dynamic>, apiBase: _baseUrl);
   }

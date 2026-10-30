@@ -161,8 +161,27 @@ class AuditEvent(BaseModel):
 
 
 class CreateTaskRequest(BaseModel):
-    instruction: str
+    instruction: str = Field(max_length=2000)
     agent_id: str | None = None
+    # A plan the app already previewed. It is validated again; it is never trusted.
+    plan: list[dict[str, Any]] | None = Field(default=None, max_length=50)
+
+
+class PlanPreviewRequest(BaseModel):
+    instruction: str = Field(min_length=1, max_length=2000)
+    agent_id: str | None = None
+
+
+class PlanPreview(BaseModel):
+    planner: str
+    steps: list[PlanStep]
+    held_back: list[HeldBack]
+    confidence: float | None = None
+    runnable: bool
+    low_confidence: bool = False
+    note: str = ""
+    # The full plan as planned (including held-back steps), to send back to create the task.
+    plan: list[dict[str, Any]]
 
 
 class TaskPublic(BaseModel):
