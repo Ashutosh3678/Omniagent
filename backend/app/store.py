@@ -1,66 +1,182 @@
-"""In-memory agents, tasks, screenshots, and live WebSocket connections."""
+"""Persistent agents, tasks and screenshots, plus live WebSocket connections."""
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import datetime, timezone
 
 from fastapi import WebSocket
+from sqlalchemy import select, update
 
+from app.db import Base, get_engine, session_scope
 from app.models import Agent, Task, utcnow
+from app.orm import AgentRow, ScreenshotRow, TaskRow
+
+
+def _aware(value: datetime | None) -> datetime | None:
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+def _agent(row: AgentRow) -> Agent:
+    return Agent(
+        id=row.id,
+        name=row.name,
+        hostname=row.hostname,
+        online=row.online,
+        connected_at=_aware(row.connected_at),
+    )
+
+
+def _task(row: TaskRow) -> Task:
+    return Task(
+        id=row.id,
+        agent_id=row.agent_id,
+        instruction=row.instruction,
+        action=row.action,
+        status=row.status,
+        logs=row.logs,
+        steps=row.steps,
+        screenshot_id=row.screenshot_id,
+        summary=row.summary,
+        error=row.error,
+        created_at=_aware(row.created_at),
+        updated_at=_aware(row.updated_at),
+    )
+
+
+def _task_values(task: Task) -> dict:
+    return {
+        "agent_id": task.agent_id,
+        "instruction": task.instruction,
+        "action": task.action.model_dump(mode="json"),
+        "status": task.status,
+        "logs": [entry.model_dump(mode="json") for entry in task.logs],
+        "steps": [step.model_dump(mode="json") for step in task.steps],
+        "screenshot_id": task.screenshot_id,
+        "summary": task.summary,
+        "error": task.error,
+        "created_at": task.created_at,
+        "updated_at": task.updated_at,
+    }
 
 
 class Store:
     def __init__(self) -> None:
-        self.agents: dict[str, Agent] = {}
-        self.tasks: dict[str, Task] = {}
-        self.screenshots: dict[str, bytes] = {}
         self.sockets: dict[str, WebSocket] = {}
-        self.lock = asyncio.Lock()
 
     def reset(self) -> None:
-        self.agents.clear()
-        self.tasks.clear()
-        self.screenshots.clear()
+        """Wipe all data. Only allowed on SQLite (tests)."""
+        engine = get_engine()
+        if engine.dialect.name != "sqlite":
+            raise RuntimeError("reset() is only allowed on SQLite")
+        Base.metadata.drop_all(engine)
+        Base.metadata.create_all(engine)
         self.sockets.clear()
 
     def new_id(self) -> str:
         return str(uuid.uuid4())
 
+    # agents
+    def add_agent(self, agent: Agent) -> None:
+        with session_scope() as db:
+            db.add(AgentRow(**agent.model_dump(), created_at=utcnow()))
+
+    def get_agent(self, agent_id: str) -> Agent | None:
+        with session_scope() as db:
+            row = db.get(AgentRow, agent_id)
+            return _agent(row) if row else None
+
+    def list_agents(self) -> list[Agent]:
+        with session_scope() as db:
+            rows = db.scalars(select(AgentRow).order_by(AgentRow.created_at)).all()
+            return [_agent(row) for row in rows]
+
     def connected_agents(self) -> list[Agent]:
-        return [agent for agent in self.agents.values() if agent.online]
+        return [agent for agent in self.list_agents() if agent.online]
 
     def resolve_agent(self, agent_id: str | None) -> Agent | None:
         if agent_id:
-            return self.agents.get(agent_id)
+            return self.get_agent(agent_id)
         online = self.connected_agents()
-        if len(online) == 1:
-            return online[0]
-        return None
+        return online[0] if len(online) == 1 else None
+
+    def mark_all_offline(self) -> None:
+        """Sockets do not survive a restart, so nothing can still be online."""
+        with session_scope() as db:
+            db.execute(update(AgentRow).values(online=False))
+            db.execute(
+                update(TaskRow)
+                .where(TaskRow.status.in_(["pending", "running"]))
+                .values(status="failed", error="Backend restarted", updated_at=utcnow())
+            )
 
     def set_online(self, agent_id: str, socket: WebSocket) -> None:
-        agent = self.agents.get(agent_id)
-        if agent is None:
-            return
-        agent.online = True
-        agent.connected_at = utcnow()
+        with session_scope() as db:
+            row = db.get(AgentRow, agent_id)
+            if row is None:
+                return
+            row.online = True
+            row.connected_at = utcnow()
         self.sockets[agent_id] = socket
 
     def set_offline(self, agent_id: str) -> list[Task]:
-        agent = self.agents.get(agent_id)
-        if agent:
-            agent.online = False
         self.sockets.pop(agent_id, None)
         failed: list[Task] = []
-        for task in self.tasks.values():
-            if task.agent_id == agent_id and task.status in {"pending", "running"}:
+        with session_scope() as db:
+            agent = db.get(AgentRow, agent_id)
+            if agent:
+                agent.online = False
+            rows = db.scalars(
+                select(TaskRow).where(
+                    TaskRow.agent_id == agent_id,
+                    TaskRow.status.in_(["pending", "running"]),
+                )
+            ).all()
+            for row in rows:
+                task = _task(row)
                 task.status = "failed"
                 task.error = "Agent disconnected"
                 task.log("Agent disconnected")
-                task.updated_at = datetime.now(timezone.utc)
+                for key, value in _task_values(task).items():
+                    setattr(row, key, value)
                 failed.append(task)
         return failed
+
+    # tasks
+    def save_task(self, task: Task) -> None:
+        with session_scope() as db:
+            row = db.get(TaskRow, task.id)
+            if row is None:
+                db.add(TaskRow(id=task.id, **_task_values(task)))
+            else:
+                for key, value in _task_values(task).items():
+                    setattr(row, key, value)
+
+    def get_task(self, task_id: str) -> Task | None:
+        with session_scope() as db:
+            row = db.get(TaskRow, task_id)
+            return _task(row) if row else None
+
+    def list_tasks(self) -> list[Task]:
+        with session_scope() as db:
+            rows = db.scalars(select(TaskRow).order_by(TaskRow.created_at.desc())).all()
+            return [_task(row) for row in rows]
+
+    # screenshots
+    def save_screenshot(self, task_id: str, data: bytes) -> None:
+        with session_scope() as db:
+            row = db.get(ScreenshotRow, task_id)
+            if row is None:
+                db.add(ScreenshotRow(task_id=task_id, data=data))
+            else:
+                row.data = data
+
+    def get_screenshot(self, task_id: str) -> bytes | None:
+        with session_scope() as db:
+            row = db.get(ScreenshotRow, task_id)
+            return row.data if row else None
 
 
 store = Store()

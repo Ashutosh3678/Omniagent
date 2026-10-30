@@ -1,3 +1,4 @@
 # OmniAgent Docker
 
-Not used in Phase 1. The Windows PC agent runs directly on the local machine.
+The Postgres service is defined in `docker-compose.yml` at the repo root.
+The Windows PC agent runs directly on the local machine.

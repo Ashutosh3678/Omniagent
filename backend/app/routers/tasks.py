@@ -38,30 +38,31 @@ async def create_task(
         action=action,
     )
     task.log("Task accepted")
-    store.tasks[task.id] = task
+    store.save_task(task)
 
-    dispatched = await send_task(agent.id, task.id)
+    dispatched = await send_task(agent.id, task)
     if not dispatched:
         task.status = "failed"
         task.error = "Agent is disconnected"
         task.log("Dispatch failed")
+        store.save_task(task)
         raise HTTPException(status.HTTP_409_CONFLICT, "Agent is disconnected")
 
     task.status = "running"
     task.log("Dispatched to agent")
+    store.save_task(task)
     asyncio.create_task(fail_if_timed_out(task.id))
     return TaskPublic.from_task(task)
 
 
 @router.get("", response_model=list[TaskPublic])
 def list_tasks(_: str = Depends(require_app)) -> list[TaskPublic]:
-    tasks = sorted(store.tasks.values(), key=lambda item: item.created_at, reverse=True)
-    return [TaskPublic.from_task(task) for task in tasks]
+    return [TaskPublic.from_task(task) for task in store.list_tasks()]
 
 
 @router.get("/{task_id}", response_model=TaskPublic)
 def get_task(task_id: str, _: str = Depends(require_app)) -> TaskPublic:
-    task = store.tasks.get(task_id)
+    task = store.get_task(task_id)
     if task is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Task not found")
     return TaskPublic.from_task(task)
@@ -69,16 +70,15 @@ def get_task(task_id: str, _: str = Depends(require_app)) -> TaskPublic:
 
 @router.get("/{task_id}/screenshot")
 def get_screenshot(task_id: str, _: str = Depends(require_app)) -> Response:
-    task = store.tasks.get(task_id)
-    data = store.screenshots.get(task_id)
-    if task is None or data is None:
+    data = store.get_screenshot(task_id)
+    if data is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Screenshot not found")
     return Response(content=data, media_type="image/png")
 
 
 @router.post("/{task_id}/cancel", response_model=TaskPublic)
 def cancel_task(task_id: str, _: str = Depends(require_app)) -> TaskPublic:
-    task = store.tasks.get(task_id)
+    task = store.get_task(task_id)
     if task is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Task not found")
     if task.status in {"completed", "failed"}:
@@ -86,4 +86,5 @@ def cancel_task(task_id: str, _: str = Depends(require_app)) -> TaskPublic:
     task.status = "failed"
     task.error = "Cancelled"
     task.log("Cancelled by client")
+    store.save_task(task)
     return TaskPublic.from_task(task)

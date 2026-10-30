@@ -4,3 +4,6 @@ pydantic==2.14.1
 websockets==17.3
 httpx==0.28.1
 pytest==9.1.1
+sqlalchemy==2.1.6
+alembic==1.20.1
+psycopg[binary]==3.3.6

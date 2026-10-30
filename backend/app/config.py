@@ -9,3 +9,7 @@ AGENT_TOKEN = os.environ.get("OMNIAGENT_AGENT_TOKEN", "dev-agent-token")
 TASK_TIMEOUT_SECONDS = float(os.environ.get("OMNIAGENT_TASK_TIMEOUT", "90"))
 HOST = os.environ.get("OMNIAGENT_HOST", "0.0.0.0")
 PORT = int(os.environ.get("OMNIAGENT_PORT", "8000"))
+DATABASE_URL = os.environ.get(
+    "OMNIAGENT_DATABASE_URL",
+    "postgresql+psycopg://omniagent:omniagent@localhost:5432/omniagent",
+)

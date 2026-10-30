@@ -1,0 +1,19 @@
+services:
+  db:
+    image: postgres:16
+    container_name: omniagent-db
+    environment:
+      POSTGRES_USER: omniagent
+      POSTGRES_PASSWORD: omniagent
+      POSTGRES_DB: omniagent
+    ports:
+      - "5432:5432"
+    volumes:
+      - omniagent-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U omniagent"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  omniagent-pgdata:

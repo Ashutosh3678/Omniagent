@@ -148,3 +148,21 @@ def _register(client: TestClient) -> str:
 def _register_and_connect(client: TestClient):
     agent_id = _register(client)
     return agent_id
+
+
+def test_restart_marks_agents_offline_and_fails_running_tasks() -> None:
+    with TestClient(app) as client:
+        agent_id = _register(client)
+        with client.websocket_connect(
+            f"/api/v1/agents/{agent_id}/ws", headers={"Authorization": "Bearer dev-agent-token"}
+        ) as ws:
+            ws.receive_json()
+            task_id = client.post(
+                "/api/v1/tasks", headers=APP, json={"instruction": "open notepad"}
+            ).json()["id"]
+            ws.receive_json()
+            store.mark_all_offline()  # what the lifespan hook does on boot
+            fetched = client.get(f"/api/v1/tasks/{task_id}", headers=APP).json()
+            assert fetched["status"] == "failed"
+            assert fetched["error"] == "Backend restarted"
+            assert client.get("/api/v1/agents", headers=APP).json()[0]["online"] is False

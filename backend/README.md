@@ -3,7 +3,8 @@
 FastAPI service that routes allowlisted tasks from the Flutter app to a
 connected Windows PC agent over an authenticated WebSocket.
 
-In-memory storage only. No Gemini, PostgreSQL, or arbitrary remote control.
+Agents, tasks and screenshots are stored in PostgreSQL (SQLAlchemy + Alembic).
+No Gemini or arbitrary remote control yet.
 
 ## Install
 
@@ -13,6 +14,18 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
+
+## Database
+
+```powershell
+docker compose up -d db          # from the repo root
+cd backend
+alembic upgrade head
+```
+
+Connection string: `OMNIAGENT_DATABASE_URL` (default
+`postgresql+psycopg://omniagent:omniagent@localhost:5432/omniagent`).
+Tests use in-memory SQLite and need no database.
 
 ## Run
 

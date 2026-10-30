@@ -17,10 +17,10 @@ def register_agent(
     _: str = Depends(require_agent),
 ) -> AgentPublic:
     agent = Agent(id=store.new_id(), name=body.name, hostname=body.hostname)
-    store.agents[agent.id] = agent
+    store.add_agent(agent)
     return AgentPublic(**agent.model_dump())
 
 
 @router.get("", response_model=list[AgentPublic])
 def list_agents(_: str = Depends(require_app)) -> list[AgentPublic]:
-    return [AgentPublic(**agent.model_dump()) for agent in store.agents.values()]
+    return [AgentPublic(**agent.model_dump()) for agent in store.list_agents()]
