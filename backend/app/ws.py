@@ -82,7 +82,7 @@ async def agent_socket(websocket: WebSocket, agent_id: str) -> None:
     if agent.status != "active" or agent.expired:
         reason = "device_revoked" if agent.status != "active" else "device_expired"
         store.add_audit("connection_denied", "deny", reason, user_id=agent.user_id, agent_id=agent_id)
-        await websocket.close(code=4403)
+        await websocket.close(code=4403, reason=reason)
         return
 
     await websocket.accept()

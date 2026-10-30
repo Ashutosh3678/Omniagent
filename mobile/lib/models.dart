@@ -22,7 +22,8 @@ class TaskStep {
   final String? screenshotUrl;
 
   /// A step that did something but could not be confirmed, or did not work.
-  bool get hasProblem => status == 'failed' || status == 'unverified' || status == 'held_back';
+  bool get hasProblem =>
+      status == 'failed' || status == 'unverified' || status == 'held_back';
 }
 
 class TaskItem {
@@ -49,12 +50,12 @@ class TaskItem {
   final List<TaskStep> steps;
 
   String get statusLabel => switch (status) {
-        TaskStatus.pending => 'Pending',
-        TaskStatus.running => 'Running',
-        TaskStatus.completed => 'Success',
-        TaskStatus.partial => 'Partial',
-        TaskStatus.failed => 'Failed',
-      };
+    TaskStatus.pending => 'Pending',
+    TaskStatus.running => 'Running',
+    TaskStatus.completed => 'Success',
+    TaskStatus.partial => 'Partial',
+    TaskStatus.failed => 'Failed',
+  };
 
   factory TaskItem.fromJson(Map<String, dynamic> json, {String apiBase = ''}) {
     final statusName = json['status'] as String? ?? 'pending';
@@ -62,7 +63,8 @@ class TaskItem {
     return TaskItem(
       id: json['id'] as String?,
       title: json['instruction'] as String? ?? json['title'] as String? ?? '',
-      when: json['updated_at'] as String? ?? json['created_at'] as String? ?? '',
+      when:
+          json['updated_at'] as String? ?? json['created_at'] as String? ?? '',
       status: TaskStatus.values.firstWhere(
         (value) => value.name == statusName,
         orElse: () => TaskStatus.pending,
@@ -78,7 +80,10 @@ class TaskItem {
             status: step['status'] as String? ?? 'pending',
             detail: step['detail'] as String? ?? '',
             hasScreenshot: step['has_screenshot'] as bool? ?? false,
-            screenshotUrl: resolveUrl(apiBase, step['screenshot_url'] as String?),
+            screenshotUrl: resolveUrl(
+              apiBase,
+              step['screenshot_url'] as String?,
+            ),
           ),
       ],
     );
@@ -87,7 +92,11 @@ class TaskItem {
 
 /// An app a PC can open, as its OmniAgent program reported it.
 class AppInfo {
-  const AppInfo({required this.id, required this.label, this.needsWorkspace = false});
+  const AppInfo({
+    required this.id,
+    required this.label,
+    this.needsWorkspace = false,
+  });
 
   final String id;
   final String label;
@@ -96,10 +105,10 @@ class AppInfo {
   final bool needsWorkspace;
 
   factory AppInfo.fromJson(Map<String, dynamic> map) => AppInfo(
-        id: map['id'] as String,
-        label: map['label'] as String? ?? map['id'] as String,
-        needsWorkspace: map['needs_workspace'] as bool? ?? false,
-      );
+    id: map['id'] as String,
+    label: map['label'] as String? ?? map['id'] as String,
+    needsWorkspace: map['needs_workspace'] as bool? ?? false,
+  );
 }
 
 class PcDevice {
@@ -134,25 +143,31 @@ class PcDevice {
   bool get canBrowse => actions.contains('browser_navigate');
 
   factory PcDevice.fromJson(Map<String, dynamic> map) => PcDevice(
-        id: map['id'] as String?,
-        name: map['name'] as String,
-        hostName: map['hostname'] as String,
-        online: map['online'] as bool? ?? false,
-        revoked: map['status'] == 'revoked',
-        permittedApps: [
-          for (final app in (map['permitted_apps'] as List<dynamic>? ?? const [])) app as String,
-        ],
-        actions: [
-          for (final action in (map['actions'] as List<dynamic>? ?? const [])) action as String,
-        ],
-        apps: [
-          for (final app in (map['apps'] as List<dynamic>? ?? const [])) AppInfo.fromJson(app as Map<String, dynamic>),
-        ],
-        workspaces: [
-          for (final name in (map['workspaces'] as List<dynamic>? ?? const [])) name as String,
-        ],
-        expiresAt: map['expires_at'] == null ? null : DateTime.parse(map['expires_at'] as String).toLocal(),
-      );
+    id: map['id'] as String?,
+    name: map['name'] as String,
+    hostName: map['hostname'] as String,
+    online: map['online'] as bool? ?? false,
+    revoked: map['status'] == 'revoked',
+    permittedApps: [
+      for (final app in (map['permitted_apps'] as List<dynamic>? ?? const []))
+        app as String,
+    ],
+    actions: [
+      for (final action in (map['actions'] as List<dynamic>? ?? const []))
+        action as String,
+    ],
+    apps: [
+      for (final app in (map['apps'] as List<dynamic>? ?? const []))
+        AppInfo.fromJson(app as Map<String, dynamic>),
+    ],
+    workspaces: [
+      for (final name in (map['workspaces'] as List<dynamic>? ?? const []))
+        name as String,
+    ],
+    expiresAt: map['expires_at'] == null
+        ? null
+        : DateTime.parse(map['expires_at'] as String).toLocal(),
+  );
 
   bool get expired => expiresAt != null && !expiresAt!.isAfter(DateTime.now());
 
@@ -204,7 +219,8 @@ class PlanPreview {
       steps: [
         for (final step in (json['steps'] as List<dynamic>? ?? const []))
           PreviewStep(
-            description: (step as Map<String, dynamic>)['description'] as String? ?? '',
+            description:
+                (step as Map<String, dynamic>)['description'] as String? ?? '',
             confidence: (step['confidence'] as num?)?.toDouble() ?? 1,
           ),
       ],

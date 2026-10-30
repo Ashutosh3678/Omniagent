@@ -59,10 +59,11 @@ class Session extends ChangeNotifier {
     if (_token == null) return;
     _token = null;
     _user = null;
+    // Leave the app first; clearing secure storage can be slow or fail and must not block sign-out.
+    notifyListeners();
     try {
       await _storage.deleteAll();
     } catch (_) {}
-    notifyListeners();
   }
 }
 

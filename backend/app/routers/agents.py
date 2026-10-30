@@ -128,7 +128,7 @@ async def revoke_agent(agent_id: str, user: User = Depends(get_current_user)) ->
     socket = store.sockets.get(agent.id)
     if socket is not None:
         try:
-            await socket.close(code=4403)
+            await socket.close(code=4403, reason="device_revoked")
         except Exception:
             pass
     return AgentPublic.from_agent(agent)

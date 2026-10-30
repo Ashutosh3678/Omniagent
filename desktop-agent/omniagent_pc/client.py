@@ -295,6 +295,24 @@ async def serve(
             await asyncio.gather(*workers, return_exceptions=True)
 
 
+def _close_reason(exc: BaseException | None, ws: Any = None) -> str:
+    received = getattr(exc, "rcvd", None)
+    if received is not None:
+        return received.reason or ""
+    return getattr(ws, "close_reason", None) or ""
+
+
+def _forget_if_removed(code: int | None, reason: str) -> None:
+    """A removed PC's saved credentials can never work again; drop them so a new pairing code is used.
+
+    An expired (not removed) PC keeps them, since the owner can extend its access.
+    """
+    if code == 4403 and reason == "device_expired":
+        return
+    CREDENTIALS_FILE.unlink(missing_ok=True)
+    logger.info("Saved credentials removed; pair again with a new code")
+
+
 def _close_code(exc: BaseException | None, ws: Any = None) -> int | None:
     received = getattr(exc, "rcvd", None)
     if received is not None:
@@ -326,6 +344,7 @@ async def run_client(
 
     while True:
         ws = None
+        fatal_exc: BaseException | None = None
         close_code: int | None = None
         _notify(on_event, "connecting", "Connecting to the server")
         try:
@@ -341,14 +360,17 @@ async def run_client(
             close_code = _close_code(None, ws)
         except websockets.exceptions.InvalidStatus as exc:
             if exc.response.status_code in FATAL_HTTP_STATUSES:
+                CREDENTIALS_FILE.unlink(missing_ok=True)
                 raise RejectedByBackend(f"Backend rejected this PC ({exc.response.status_code})") from exc
             logger.warning("Backend answered %s", exc.response.status_code)
         except websockets.exceptions.ConnectionClosed as exc:
+            fatal_exc = exc
             close_code = _close_code(exc, ws)
         except (OSError, TimeoutError, websockets.exceptions.WebSocketException) as exc:
             logger.warning("Connection failed: %s", exc)
 
         if close_code in FATAL_CLOSE_CODES:
+            _forget_if_removed(close_code, _close_reason(fatal_exc, ws))
             raise RejectedByBackend(f"This PC was removed or is no longer allowed (code {close_code})")
 
         wait = backoff + jitter()
