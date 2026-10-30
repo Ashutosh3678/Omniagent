@@ -1,7 +1,64 @@
 import 'package:flutter/material.dart';
 
-class WelcomeScreen extends StatelessWidget {
+import '../api/client.dart';
+
+class WelcomeScreen extends StatefulWidget {
   const WelcomeScreen({super.key});
+
+  @override
+  State<WelcomeScreen> createState() => _WelcomeScreenState();
+}
+
+class _WelcomeScreenState extends State<WelcomeScreen> {
+  final _email = TextEditingController();
+  final _password = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  static final _emailPattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+
+  @override
+  void dispose() {
+    _email.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit({required bool signUp}) async {
+    final email = _email.text.trim();
+    final password = _password.text;
+    if (!_emailPattern.hasMatch(email)) {
+      setState(() => _error = 'Enter a valid email address.');
+      return;
+    }
+    if (password.isEmpty || (signUp && password.length < 8)) {
+      setState(() => _error = signUp
+          ? 'Choose a password with at least 8 characters.'
+          : 'Enter your password.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      if (signUp) {
+        await omniApi.register(email, password);
+      } else {
+        await omniApi.login(email, password);
+      }
+      if (!mounted) return;
+      Navigator.of(context).pushReplacementNamed('/app');
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _error = 'Could not reach the server. Check your connection.');
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -9,7 +66,7 @@ class WelcomeScreen extends StatelessWidget {
 
     return Scaffold(
       body: SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(24, 56, 24, 24),
           child: Column(
             children: [
@@ -25,23 +82,40 @@ class WelcomeScreen extends StatelessWidget {
               const SizedBox(height: 16),
               Text('OmniAgent', style: Theme.of(context).textTheme.headlineSmall),
               const SizedBox(height: 40),
-              const TextField(
+              TextField(
+                controller: _email,
+                enabled: !_busy,
                 keyboardType: TextInputType.emailAddress,
-                decoration: InputDecoration(labelText: 'Email'),
+                autofillHints: const [AutofillHints.email],
+                decoration: const InputDecoration(labelText: 'Email'),
               ),
               const SizedBox(height: 16),
-              const TextField(
+              TextField(
+                controller: _password,
+                enabled: !_busy,
                 obscureText: true,
-                decoration: InputDecoration(labelText: 'Password'),
+                autofillHints: const [AutofillHints.password],
+                decoration: const InputDecoration(labelText: 'Password'),
+                onSubmitted: (_) => _submit(signUp: false),
               ),
+              if (_error != null) ...[
+                const SizedBox(height: 16),
+                Text(_error!, style: TextStyle(color: scheme.error)),
+              ],
               const SizedBox(height: 24),
               FilledButton(
-                onPressed: () => Navigator.of(context).pushReplacementNamed('/app'),
-                child: const Text('Log in'),
+                onPressed: _busy ? null : () => _submit(signUp: false),
+                child: _busy
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Log in'),
               ),
               const SizedBox(height: 12),
               OutlinedButton(
-                onPressed: () => Navigator.of(context).pushReplacementNamed('/app'),
+                onPressed: _busy ? null : () => _submit(signUp: true),
                 child: const Text('Sign up'),
               ),
             ],

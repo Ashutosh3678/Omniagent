@@ -35,10 +35,8 @@ cd backend
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Default tokens (override with env vars):
-
-- `OMNIAGENT_APP_TOKEN=dev-app-token`
-- `OMNIAGENT_AGENT_TOKEN=dev-agent-token`
+Accounts use Argon2 password hashes and HS256 JWTs. Set `OMNIAGENT_JWT_SECRET`
+to a long random value outside local dev (a dev default is built in).
 
 ## Tests
 
@@ -51,9 +49,9 @@ pytest -q
 ## API
 
 - `GET /health`
-- `POST /api/v1/agents/register` (agent token)
-- `GET /api/v1/agents` (app token)
-- `WS /api/v1/agents/{id}/ws?token=...`
+- `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `POST /api/v1/auth/token` (OAuth2 form), `GET /api/v1/auth/me`
+- `POST /api/v1/agents/register` (user JWT; returns the PC's device token once)
+- `GET /api/v1/agents`
 - `POST /api/v1/tasks` — `{ "instruction": "Open Notepad and type Hello from OmniAgent" }`
 - `GET /api/v1/tasks`
 - `GET /api/v1/tasks/{id}`

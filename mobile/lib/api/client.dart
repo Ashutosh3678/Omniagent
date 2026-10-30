@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 
 import '../models.dart';
 import 'config.dart';
+import 'session.dart';
 
 class ApiException implements Exception {
   ApiException(this.statusCode, this.message);
@@ -16,19 +17,40 @@ class ApiException implements Exception {
 }
 
 class OmniApi {
-  OmniApi({http.Client? client, String? baseUrl, String? token})
+  OmniApi({http.Client? client, String? baseUrl, Session? session})
       : _client = client ?? http.Client(),
         _baseUrl = baseUrl ?? kApiBase,
-        _token = token ?? kAppToken;
+        _session = session ?? appSession;
 
   final http.Client _client;
   final String _baseUrl;
-  final String _token;
+  final Session _session;
 
   Map<String, String> get _headers => {
-        'Authorization': 'Bearer $_token',
+        if (_session.token != null) 'Authorization': 'Bearer ${_session.token}',
         'Content-Type': 'application/json',
       };
+
+  Future<void> register(String email, String password, {String name = ''}) =>
+      _authenticate('/api/v1/auth/register', {'email': email, 'password': password, 'name': name});
+
+  Future<void> login(String email, String password) =>
+      _authenticate('/api/v1/auth/login', {'email': email, 'password': password});
+
+  Future<void> _authenticate(String path, Map<String, dynamic> payload) async {
+    final response = await _client.post(
+      Uri.parse('$_baseUrl$path'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode(payload),
+    );
+    final body = _decode(response, signOutOn401: false) as Map<String, dynamic>;
+    final user = body['user'] as Map<String, dynamic>;
+    await _session.signIn(
+      token: body['access_token'] as String,
+      email: user['email'] as String,
+      name: user['name'] as String? ?? '',
+    );
+  }
 
   Future<List<PcDevice>> listAgents() async {
     final body = await _get('/api/v1/agents');
@@ -74,6 +96,7 @@ class OmniApi {
       headers: _headers,
     );
     if (response.statusCode == 404) return null;
+    if (response.statusCode == 401) _session.signOut();
     if (response.statusCode >= 400) {
       throw ApiException(response.statusCode, response.body);
     }
@@ -93,13 +116,16 @@ class OmniApi {
     return _decode(response);
   }
 
-  dynamic _decode(http.Response response) {
+  dynamic _decode(http.Response response, {bool signOutOn401 = true}) {
+    if (response.statusCode == 401 && signOutOn401) _session.signOut();
     if (response.statusCode >= 400) {
       var message = response.body;
       try {
         final json = jsonDecode(response.body);
-        if (json is Map && json['detail'] != null) {
-          message = json['detail'].toString();
+        if (json is Map && json['detail'] is String) {
+          message = json['detail'] as String;
+        } else if (json is Map && json['detail'] is List) {
+          message = 'Please check the details you entered.';
         }
       } catch (_) {}
       throw ApiException(response.statusCode, message);

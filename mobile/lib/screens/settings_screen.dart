@@ -1,36 +1,21 @@
 import 'package:flutter/material.dart';
 
-class SettingsScreen extends StatefulWidget {
+import '../api/session.dart';
+
+class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
-}
-
-class _SettingsScreenState extends State<SettingsScreen> {
-  bool _faceId = true;
-  bool _haptics = true;
-
-  @override
   Widget build(BuildContext context) {
+    final user = appSession.user;
     return Scaffold(
       appBar: AppBar(title: const Text('Settings'), automaticallyImplyLeading: false),
       body: ListView(
         children: [
-          const ListTile(
-            leading: CircleAvatar(child: Icon(Icons.person)),
-            title: Text('Alex Chen'),
-            subtitle: Text('alex@omniagent.app'),
-          ),
-          SwitchListTile(
-            title: const Text('Face ID'),
-            value: _faceId,
-            onChanged: (value) => setState(() => _faceId = value),
-          ),
-          SwitchListTile(
-            title: const Text('Haptics'),
-            value: _haptics,
-            onChanged: (value) => setState(() => _haptics = value),
+          ListTile(
+            leading: const CircleAvatar(child: Icon(Icons.person)),
+            title: Text(user?.displayName ?? 'Not signed in'),
+            subtitle: Text(user?.email ?? ''),
           ),
           const ListTile(
             title: Text('Screenshots'),
@@ -39,7 +24,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Padding(
             padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
             child: TextButton(
-              onPressed: () => Navigator.of(context).pushNamedAndRemoveUntil('/', (_) => false),
+              onPressed: appSession.signOut,
               style: TextButton.styleFrom(
                 foregroundColor: Theme.of(context).colorScheme.error,
               ),

@@ -31,8 +31,44 @@ class Step(BaseModel):
     detail: str = ""
 
 
+class User(BaseModel):
+    id: str
+    email: str
+    name: str = ""
+    password_hash: str
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class UserPublic(BaseModel):
+    id: str
+    email: str
+    name: str
+
+    @classmethod
+    def from_user(cls, user: User) -> UserPublic:
+        return cls(id=user.id, email=user.email, name=user.name)
+
+
+class RegisterUserRequest(BaseModel):
+    email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=254)
+    password: str = Field(min_length=8, max_length=128)
+    name: str = Field(default="", max_length=120)
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserPublic
+
+
 class Agent(BaseModel):
     id: str
+    user_id: str | None = None
     name: str
     hostname: str
     online: bool = False
@@ -41,6 +77,7 @@ class Agent(BaseModel):
 
 class Task(BaseModel):
     id: str
+    user_id: str | None = None
     agent_id: str
     instruction: str
     action: Action
@@ -103,6 +140,12 @@ class AgentPublic(BaseModel):
     name: str
     hostname: str
     online: bool
+
+
+class AgentRegistered(AgentPublic):
+    """Returned once at registration; the device token is never shown again."""
+
+    device_token: str
 
 
 class WsMessage(BaseModel):

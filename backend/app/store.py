@@ -7,10 +7,11 @@ from datetime import datetime, timezone
 
 from fastapi import WebSocket
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 
 from app.db import Base, get_engine, session_scope
-from app.models import Agent, Task, utcnow
-from app.orm import AgentRow, ScreenshotRow, TaskRow
+from app.models import Agent, Task, User, utcnow
+from app.orm import AgentRow, ScreenshotRow, TaskRow, UserRow
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -19,9 +20,20 @@ def _aware(value: datetime | None) -> datetime | None:
     return value
 
 
+def _user(row: UserRow) -> User:
+    return User(
+        id=row.id,
+        email=row.email,
+        name=row.name,
+        password_hash=row.password_hash,
+        created_at=_aware(row.created_at),
+    )
+
+
 def _agent(row: AgentRow) -> Agent:
     return Agent(
         id=row.id,
+        user_id=row.user_id,
         name=row.name,
         hostname=row.hostname,
         online=row.online,
@@ -32,6 +44,7 @@ def _agent(row: AgentRow) -> Agent:
 def _task(row: TaskRow) -> Task:
     return Task(
         id=row.id,
+        user_id=row.user_id,
         agent_id=row.agent_id,
         instruction=row.instruction,
         action=row.action,
@@ -48,6 +61,7 @@ def _task(row: TaskRow) -> Task:
 
 def _task_values(task: Task) -> dict:
     return {
+        "user_id": task.user_id,
         "agent_id": task.agent_id,
         "instruction": task.instruction,
         "action": task.action.model_dump(mode="json"),
@@ -78,28 +92,55 @@ class Store:
     def new_id(self) -> str:
         return str(uuid.uuid4())
 
-    # agents
-    def add_agent(self, agent: Agent) -> None:
-        with session_scope() as db:
-            db.add(AgentRow(**agent.model_dump(), created_at=utcnow()))
+    # users
+    def add_user(self, user: User) -> bool:
+        """Returns False if the email is already registered."""
+        try:
+            with session_scope() as db:
+                db.add(UserRow(**user.model_dump()))
+        except IntegrityError:
+            return False
+        return True
 
-    def get_agent(self, agent_id: str) -> Agent | None:
+    def get_user(self, user_id: str) -> User | None:
+        with session_scope() as db:
+            row = db.get(UserRow, user_id)
+            return _user(row) if row else None
+
+    def get_user_by_email(self, email: str) -> User | None:
+        with session_scope() as db:
+            row = db.scalar(select(UserRow).where(UserRow.email == email))
+            return _user(row) if row else None
+
+    # agents
+    def add_agent(self, agent: Agent, token_hash: str) -> None:
+        with session_scope() as db:
+            db.add(AgentRow(**agent.model_dump(), token_hash=token_hash, created_at=utcnow()))
+
+    def get_agent(self, agent_id: str, user_id: str | None = None) -> Agent | None:
+        """With user_id, only returns the agent if that user owns it."""
         with session_scope() as db:
             row = db.get(AgentRow, agent_id)
-            return _agent(row) if row else None
+            if row is None or (user_id is not None and row.user_id != user_id):
+                return None
+            return _agent(row)
 
-    def list_agents(self) -> list[Agent]:
+    def get_agent_token_hash(self, agent_id: str) -> str | None:
         with session_scope() as db:
-            rows = db.scalars(select(AgentRow).order_by(AgentRow.created_at)).all()
-            return [_agent(row) for row in rows]
+            row = db.get(AgentRow, agent_id)
+            return row.token_hash if row else None
 
-    def connected_agents(self) -> list[Agent]:
-        return [agent for agent in self.list_agents() if agent.online]
+    def list_agents(self, user_id: str | None = None) -> list[Agent]:
+        with session_scope() as db:
+            query = select(AgentRow).order_by(AgentRow.created_at)
+            if user_id is not None:
+                query = query.where(AgentRow.user_id == user_id)
+            return [_agent(row) for row in db.scalars(query).all()]
 
-    def resolve_agent(self, agent_id: str | None) -> Agent | None:
+    def resolve_agent(self, agent_id: str | None, user_id: str) -> Agent | None:
         if agent_id:
-            return self.get_agent(agent_id)
-        online = self.connected_agents()
+            return self.get_agent(agent_id, user_id)
+        online = [agent for agent in self.list_agents(user_id) if agent.online]
         return online[0] if len(online) == 1 else None
 
     def mark_all_offline(self) -> None:
@@ -154,15 +195,20 @@ class Store:
                 for key, value in _task_values(task).items():
                     setattr(row, key, value)
 
-    def get_task(self, task_id: str) -> Task | None:
+    def get_task(self, task_id: str, user_id: str | None = None) -> Task | None:
+        """With user_id, only returns the task if that user owns it."""
         with session_scope() as db:
             row = db.get(TaskRow, task_id)
-            return _task(row) if row else None
+            if row is None or (user_id is not None and row.user_id != user_id):
+                return None
+            return _task(row)
 
-    def list_tasks(self) -> list[Task]:
+    def list_tasks(self, user_id: str | None = None) -> list[Task]:
         with session_scope() as db:
-            rows = db.scalars(select(TaskRow).order_by(TaskRow.created_at.desc())).all()
-            return [_task(row) for row in rows]
+            query = select(TaskRow).order_by(TaskRow.created_at.desc())
+            if user_id is not None:
+                query = query.where(TaskRow.user_id == user_id)
+            return [_task(row) for row in db.scalars(query).all()]
 
     # screenshots
     def save_screenshot(self, task_id: str, data: bytes) -> None:
@@ -173,8 +219,11 @@ class Store:
             else:
                 row.data = data
 
-    def get_screenshot(self, task_id: str) -> bytes | None:
+    def get_screenshot(self, task_id: str, user_id: str | None = None) -> bytes | None:
         with session_scope() as db:
+            task = db.get(TaskRow, task_id)
+            if task is None or (user_id is not None and task.user_id != user_id):
+                return None
             row = db.get(ScreenshotRow, task_id)
             return row.data if row else None
 

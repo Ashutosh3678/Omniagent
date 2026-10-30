@@ -1,11 +1,11 @@
-"""Runtime settings. Tokens default to local-dev values only."""
+"""Runtime settings. Secrets default to local-dev values only."""
 
 from __future__ import annotations
 
 import os
 
-APP_TOKEN = os.environ.get("OMNIAGENT_APP_TOKEN", "dev-app-token")
-AGENT_TOKEN = os.environ.get("OMNIAGENT_AGENT_TOKEN", "dev-agent-token")
+JWT_SECRET = os.environ.get("OMNIAGENT_JWT_SECRET", "dev-only-secret-change-me-in-production-0000")
+JWT_EXPIRE_MINUTES = int(os.environ.get("OMNIAGENT_JWT_EXPIRE_MINUTES", str(7 * 24 * 60)))
 TASK_TIMEOUT_SECONDS = float(os.environ.get("OMNIAGENT_TASK_TIMEOUT", "90"))
 HOST = os.environ.get("OMNIAGENT_HOST", "0.0.0.0")
 PORT = int(os.environ.get("OMNIAGENT_PORT", "8000"))

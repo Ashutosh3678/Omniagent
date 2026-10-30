@@ -54,7 +54,7 @@ Terminal 2 — Windows agent:
 cd desktop-agent
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python connect.py --api http://127.0.0.1:8000 --token dev-agent-token
+python connect.py --api http://127.0.0.1:8000 --email you@example.com
 ```
 
 Terminal 3 — mobile app:
@@ -62,12 +62,12 @@ Terminal 3 — mobile app:
 ```powershell
 cd mobile
 flutter pub get
-flutter run --dart-define=API_BASE=http://127.0.0.1:8000 --dart-define=APP_TOKEN=dev-app-token
+flutter run --dart-define=API_BASE=http://127.0.0.1:8000
 ```
 
 On an Android emulator use `API_BASE=http://10.0.2.2:8000`.
 
-Then tap **Run Task** with `Open Notepad and type Hello from OmniAgent`.
+Create an account on the login screen (use the same email for the agent), then tap **Run Task** with `Open Notepad and type Hello from OmniAgent`.
 
 Offline Notepad demo still works: `cd desktop-agent` then `python main.py`.
 

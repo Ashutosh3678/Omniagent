@@ -51,10 +51,14 @@ Start the backend first, then:
 
 ```powershell
 pip install -r requirements.txt
-python connect.py --api http://127.0.0.1:8000 --token dev-agent-token --name "Office PC"
+python connect.py --api http://127.0.0.1:8000 --email you@example.com --name "Office PC"
 ```
 
-The agent registers, stays connected, and only runs allowlisted Notepad tasks.
+The first run signs in with your OmniAgent account (it prompts for the password
+if `--password` / `OMNIAGENT_PASSWORD` is not set), registers this PC under
+your account, and saves a per-device token in `~/.omniagent/agent.json`. Later
+runs reuse that token and need no password. Use `--reset` to sign in again.
+The agent only runs allowlisted Notepad tasks.
 
 Type a custom message:
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import getpass
 import json
 import logging
 import os
@@ -21,7 +22,7 @@ from omniagent_pc.runner import run_phase1_task
 logger = logging.getLogger(__name__)
 
 DEFAULT_API = os.environ.get("OMNIAGENT_API", "http://127.0.0.1:8000")
-DEFAULT_TOKEN = os.environ.get("OMNIAGENT_AGENT_TOKEN", "dev-agent-token")
+CREDENTIALS_FILE = Path(os.environ.get("OMNIAGENT_HOME", Path.home() / ".omniagent")) / "agent.json"
 ALLOWED_ACTIONS = frozenset({"open_notepad"})
 
 
@@ -40,14 +41,50 @@ def _request(method: str, url: str, token: str, payload: dict[str, Any] | None =
         return json.loads(response.read().decode())
 
 
-def register_agent(api: str, token: str, name: str, hostname: str) -> str:
+def login(api: str, email: str, password: str) -> str:
     body = _request(
+        "POST", f"{api.rstrip('/')}/api/v1/auth/login", "", {"email": email, "password": password}
+    )
+    return str(body["access_token"])
+
+
+def register_agent(api: str, user_token: str, name: str, hostname: str) -> dict[str, Any]:
+    return _request(
         "POST",
         f"{api.rstrip('/')}/api/v1/agents/register",
-        token,
+        user_token,
         {"name": name, "hostname": hostname},
     )
-    return str(body["id"])
+
+
+def load_credentials(api: str) -> dict[str, str] | None:
+    try:
+        data = json.loads(CREDENTIALS_FILE.read_text())
+    except (OSError, ValueError):
+        return None
+    if data.get("api") != api.rstrip("/") or not data.get("agent_id") or not data.get("device_token"):
+        return None
+    return data
+
+
+def save_credentials(api: str, agent_id: str, device_token: str) -> None:
+    CREDENTIALS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CREDENTIALS_FILE.write_text(
+        json.dumps({"api": api.rstrip("/"), "agent_id": agent_id, "device_token": device_token})
+    )
+
+
+def ensure_credentials(api: str, name: str, hostname: str, email: str, password: str) -> dict[str, str]:
+    """Reuse the saved device credentials, or sign in once to register this PC."""
+    saved = load_credentials(api)
+    if saved:
+        return saved
+    email = email or input("OmniAgent account email: ").strip()
+    password = password or getpass.getpass("Password: ")
+    registered = register_agent(api, login(api, email, password), name, hostname)
+    save_credentials(api, registered["id"], registered["device_token"])
+    logger.info("Registered %s (%s); device credentials saved to %s", name, registered["id"], CREDENTIALS_FILE)
+    return load_credentials(api) or {}
 
 
 def _ws_url(api: str, agent_id: str) -> str:
@@ -116,10 +153,10 @@ async def handle_task(ws: Any, message: dict[str, Any]) -> None:
     )
 
 
-async def run_client(api: str, token: str, name: str, hostname: str) -> None:
-    agent_id = register_agent(api, token, name, hostname)
+async def run_client(api: str, name: str, hostname: str, email: str = "", password: str = "") -> None:
+    creds = await asyncio.to_thread(ensure_credentials, api, name, hostname, email, password)
+    agent_id, token = creds["agent_id"], creds["device_token"]
     url = _ws_url(api, agent_id)
-    logger.info("Registered %s (%s)", name, agent_id)
     async with websockets.connect(
         url, additional_headers={"Authorization": f"Bearer {token}"}
     ) as ws:
@@ -133,15 +170,25 @@ async def run_client(api: str, token: str, name: str, hostname: str) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="OmniAgent Windows PC connector")
     parser.add_argument("--api", default=DEFAULT_API)
-    parser.add_argument("--token", default=DEFAULT_TOKEN)
+    parser.add_argument("--email", default=os.environ.get("OMNIAGENT_EMAIL", ""))
+    parser.add_argument("--password", default=os.environ.get("OMNIAGENT_PASSWORD", ""))
+    parser.add_argument("--reset", action="store_true", help="forget saved device credentials")
     parser.add_argument("--name", default=os.environ.get("OMNIAGENT_PC_NAME", "Office PC"))
     parser.add_argument("--hostname", default=socket.gethostname())
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    if args.reset:
+        CREDENTIALS_FILE.unlink(missing_ok=True)
     try:
-        asyncio.run(run_client(args.api, args.token, args.name, args.hostname))
+        asyncio.run(run_client(args.api, args.name, args.hostname, args.email, args.password))
     except KeyboardInterrupt:
         return 0
+    except urllib.error.HTTPError as exc:
+        logger.error("Backend refused the request (%s). Check your email and password.", exc.code)
+        return 1
+    except websockets.exceptions.InvalidStatus as exc:
+        logger.error("Backend rejected this PC (%s). Run again with --reset to sign in and re-register.", exc.response.status_code)
+        return 1
     except (urllib.error.URLError, OSError) as exc:
         logger.error("Could not reach backend: %s", exc)
         return 1

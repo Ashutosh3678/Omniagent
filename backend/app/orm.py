@@ -14,10 +14,22 @@ from app.models import utcnow
 Json = JSON().with_variant(JSONB(), "postgresql")
 
 
+class UserRow(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(120), default="")
+    password_hash: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class AgentRow(Base):
     __tablename__ = "agents"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), index=True, nullable=True)
+    token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     name: Mapped[str] = mapped_column(String(120))
     hostname: Mapped[str] = mapped_column(String(255))
     online: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -29,6 +41,7 @@ class TaskRow(Base):
     __tablename__ = "tasks"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), index=True, nullable=True)
     agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), index=True)
     instruction: Mapped[str] = mapped_column(Text)
     action: Mapped[dict] = mapped_column(Json)
