@@ -27,10 +27,10 @@ DATABASE_URL = os.environ.get(
     "postgresql+psycopg://omniagent:omniagent@localhost:5432/omniagent",
 )
 
-# Gemini planner. Without a key only the built-in rules can plan.
-GEMINI_API_KEY = (os.environ.get("OMNIAGENT_GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY") or "").strip()
-GEMINI_MODEL = os.environ.get("OMNIAGENT_GEMINI_MODEL", "gemini-2.5-flash")
-GEMINI_TIMEOUT_SECONDS = float(os.environ.get("OMNIAGENT_GEMINI_TIMEOUT", "25"))
+# LLM planner on Groq. Without a key only the built-in rules can plan.
+GROQ_API_KEY = (os.environ.get("OMNIAGENT_GROQ_API_KEY") or os.environ.get("GROQ_API_KEY") or "").strip()
+GROQ_MODEL = os.environ.get("OMNIAGENT_GROQ_MODEL", "openai/gpt-oss-20b")
+GROQ_TIMEOUT_SECONDS = float(os.environ.get("OMNIAGENT_GROQ_TIMEOUT", "25"))
 PLANS_PER_MINUTE = int(os.environ.get("OMNIAGENT_PLANS_PER_MINUTE", "20"))
 # Plans below this confidence are flagged in the preview so the user looks twice.
 LOW_CONFIDENCE = 0.6

@@ -4,7 +4,7 @@ import 'package:omniagent/models.dart';
 import 'package:omniagent/screens/plan_sheet.dart';
 
 PlanPreview preview(Map<String, dynamic> overrides) => PlanPreview.fromJson({
-      'planner': 'gemini',
+      'planner': 'groq',
       'steps': [
         {'description': 'Open Notepad', 'confidence': 0.9},
         {'description': 'Type "Hi"', 'confidence': 0.9},

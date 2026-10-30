@@ -4,7 +4,7 @@ FastAPI service that routes allowlisted tasks from the Flutter app to a
 connected Windows PC agent over an authenticated WebSocket.
 
 Agents, tasks and screenshots are stored in PostgreSQL (SQLAlchemy + Alembic).
-No Gemini or arbitrary remote control yet.
+No arbitrary remote control: every step is a typed, validated action.
 
 ## Install
 
@@ -56,16 +56,16 @@ WebSocket messages: the backend sends `task` with `plan`; the agent replies with
 `step` (`index`, `status`: running/success/failed/skipped, `detail`) and `result`
 (`completed`/`partial`/`failed`).
 
-## Planner (Gemini)
+## Planner (Groq)
 
 `POST /api/v1/tasks` and `POST /api/v1/plans/preview` turn an instruction into a plan:
 
 1. The built-in rules handle exact phrases such as "Open Notepad and type ..." (no AI call).
-2. Anything else goes to Gemini (`app/planner.py`) when a key is configured. The request
-   asks for structured JSON, temperature 0, and lists only the actions and apps this PC may
-   use. The user's text is sent as data, never as part of the system prompt.
+2. Anything else goes to an LLM on Groq (`app/planner.py`, default `openai/gpt-oss-20b`)
+   when a key is configured. The request asks for a JSON object at temperature 0 and lists
+   only the actions and apps this PC may use. The user's text is sent as data, never as part of the system prompt.
 3. Whatever the planner returns is untrusted and goes through the same validator as every
-   other plan. A planner failure is a 503 and never falls back to guessing; Gemini calls
+   other plan. A planner failure is a 503 and never falls back to guessing; LLM calls
    are limited to 20 per user per minute.
 
 `POST /api/v1/plans/preview` plans and validates without running anything and returns the
@@ -75,11 +75,11 @@ steps, held-back steps, confidence and a `low_confidence` flag. Send its `plan` 
 Set the key in the environment or in an untracked `backend/.env` (or repo-root `.env`):
 
 ```
-OMNIAGENT_GEMINI_API_KEY=your-key
-OMNIAGENT_GEMINI_MODEL=gemini-2.5-flash   # optional
+OMNIAGENT_GROQ_API_KEY=your-key
+OMNIAGENT_GROQ_MODEL=openai/gpt-oss-20b   # optional
 ```
 
-Your instruction text is sent to Google's Gemini API when the rules do not match it.
+Your instruction text is sent to Groq's API when the rules do not match it.
 
 ## Dispatch rules
 

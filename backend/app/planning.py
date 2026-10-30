@@ -1,4 +1,4 @@
-"""Chooses how an instruction becomes a plan: client-supplied, built-in rules, or Gemini."""
+"""Chooses how an instruction becomes a plan: client-supplied, built-in rules, or the LLM (Groq)."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def unsupported_message() -> str:
 
 
 async def llm_plan(user: User, agent: Agent, instruction: str) -> PlannerResult:
-    """Asks Gemini for a plan. Refuses when rate limited or the planner fails; may return no steps."""
+    """Asks the LLM for a plan. Refuses when rate limited or the planner fails; may return no steps."""
     llm = planner_module.get_planner()
     if llm is None:
         deny(status.HTTP_400_BAD_REQUEST, "invalid_instruction", unsupported_message(), user=user, agent=agent)

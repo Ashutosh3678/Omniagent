@@ -23,7 +23,8 @@ A Python program on Windows can:
 The Flutter app submits an allowlisted Notepad task to FastAPI. The backend
 routes it over an authenticated WebSocket to the Windows PC agent. The agent
 runs the existing Notepad automation and returns status, logs, and a
-screenshot. Storage is in-memory. No Gemini or PostgreSQL yet.
+screenshot. Data is stored in PostgreSQL; accounts, device pairing, plan validation and an
+LLM planner (Groq) sit in front of the agent.
 
 ## Repository structure
 
@@ -100,4 +101,6 @@ Windows PC
 | 1 | Local Windows agent: Notepad, typing, screenshot, verification |
 | 2 | Flutter mobile UI (8 screens) |
 | 3 | FastAPI backend, authenticated agent WebSocket, task status |
-| 4+ | Gemini, PostgreSQL, richer actions |
+| 4 | PostgreSQL, accounts, device pairing, audit log |
+| 5 | Typed multi-step plans, validation, LLM planner (Groq) with preview |
+| 6+ | Observe-think-act-verify loop, richer actions, streaming, CI |

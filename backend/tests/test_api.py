@@ -609,9 +609,9 @@ def test_plan_with_nothing_runnable_is_refused_and_creates_no_task() -> None:
             assert events[0]["event"] == "dispatch_denied" and events[0]["reason"] == "not_supported"
 
 
-# planner integration (Gemini is always faked here)
+# planner integration (the LLM is always faked here)
 class FakePlanner:
-    name = "gemini"
+    name = "groq"
 
     def __init__(self, steps=None, note="", error: Exception | None = None) -> None:
         self.steps = steps or []
@@ -625,7 +625,7 @@ class FakePlanner:
         self.calls.append((instruction, list(permitted_apps)))
         if self.error:
             raise self.error
-        return PlannerResult(steps=self.steps, planner="gemini", note=self.note)
+        return PlannerResult(steps=self.steps, planner="groq", note=self.note)
 
 
 def _use(monkeypatch, fake: FakePlanner | None) -> None:
@@ -640,7 +640,7 @@ COMPOSE = [
 ]
 
 
-def test_gemini_plan_runs_as_a_multi_step_task(monkeypatch) -> None:
+def test_llm_plan_runs_as_a_multi_step_task(monkeypatch) -> None:
     fake = FakePlanner(COMPOSE)
     _use(monkeypatch, fake)
     with TestClient(app) as client:
@@ -658,8 +658,8 @@ def test_gemini_plan_runs_as_a_multi_step_task(monkeypatch) -> None:
             assert fake.calls == [("write a short thank-you note in notepad", ["notepad"])]
             assert created.json()["confidence"] == pytest.approx(0.89, abs=0.01)
         reasons = [(e["event"], e["reason"]) for e in client.get("/api/v1/audit", headers=user).json()]
-        assert ("plan_created", "gemini: 4 step(s)") in reasons
-        assert ("dispatch_permitted", "4 step(s) via gemini") in reasons
+        assert ("plan_created", "groq: 4 step(s)") in reasons
+        assert ("dispatch_permitted", "4 step(s) via groq") in reasons
 
 
 def test_exact_rule_phrases_never_call_the_llm(monkeypatch) -> None:
@@ -774,7 +774,7 @@ def test_preview_shows_the_plan_without_running_anything(monkeypatch) -> None:
         preview = client.post("/api/v1/plans/preview", headers=user, json={"instruction": "write a thank-you note"})
         assert preview.status_code == 200, preview.text
         body = preview.json()
-        assert body["planner"] == "gemini" and body["runnable"] is True and body["low_confidence"] is False
+        assert body["planner"] == "groq" and body["runnable"] is True and body["low_confidence"] is False
         assert [s["description"] for s in body["steps"]][:2] == ["Open Notepad", "Type \u201cDear team\u201d"]
         assert client.get("/api/v1/tasks", headers=user).json() == []
 
