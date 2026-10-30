@@ -6,6 +6,9 @@ import 'screens/history_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/settings_screen.dart';
 
+/// Tab positions, so screens can send the user to another tab without magic numbers.
+enum AppTab { home, devices, history, settings }
+
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
 
@@ -14,7 +17,7 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> {
-  int _index = 0;
+  AppTab _tab = AppTab.home;
 
   @override
   void initState() {
@@ -22,25 +25,44 @@ class _AppShellState extends State<AppShell> {
     events.start();
   }
 
-  static const _pages = [
-    HomeScreen(),
-    DevicesScreen(),
-    HistoryScreen(),
-    SettingsScreen(),
-  ];
+  void _go(AppTab tab) => setState(() => _tab = tab);
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: IndexedStack(index: _index, children: _pages),
+      body: IndexedStack(
+        index: _tab.index,
+        children: [
+          HomeScreen(onNavigate: _go),
+          const DevicesScreen(),
+          const HistoryScreen(),
+          const SettingsScreen(),
+        ],
+      ),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (index) => setState(() => _index = index),
+        selectedIndex: _tab.index,
+        onDestinationSelected: (index) => _go(AppTab.values[index]),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
-          NavigationDestination(icon: Icon(Icons.desktop_windows_outlined), selectedIcon: Icon(Icons.desktop_windows), label: 'Devices'),
-          NavigationDestination(icon: Icon(Icons.history_outlined), selectedIcon: Icon(Icons.history), label: 'History'),
-          NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'Settings'),
+          NavigationDestination(
+            icon: Icon(Icons.bolt_outlined),
+            selectedIcon: Icon(Icons.bolt_rounded),
+            label: 'Home',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.devices_outlined),
+            selectedIcon: Icon(Icons.devices_rounded),
+            label: 'Devices',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.history_rounded),
+            selectedIcon: Icon(Icons.history_rounded),
+            label: 'History',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.settings_outlined),
+            selectedIcon: Icon(Icons.settings_rounded),
+            label: 'Settings',
+          ),
         ],
       ),
     );

@@ -1,10 +1,11 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
 import '../api/events.dart';
-import '../mock_data.dart';
 import '../models.dart';
+import '../theme.dart';
 import '../widgets.dart';
 
 class LiveScreen extends StatefulWidget {
@@ -18,29 +19,28 @@ class _LiveScreenState extends State<LiveScreen> {
   String? _url;
   String _caption = '';
   Timer? _poll;
+  StreamSubscription<TaskItem>? _live;
+  StreamSubscription<void>? _resync;
+  int _shown = -1;
 
   TaskItem? get _task {
     final args = ModalRoute.of(context)?.settings.arguments;
     return args is TaskItem ? args : null;
   }
 
-  StreamSubscription<TaskItem>? _live;
-  StreamSubscription<void>? _resync;
-  int _shown = -1;
-
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_poll == null) {
-      final id = _task?.id;
-      // A new screenshot or a finished task is pushed; this slow check only covers a dropped connection.
-      _poll = Timer.periodic(const Duration(seconds: 5), (_) {
-        if (!events.connected.value) _load();
-      });
-      _live = events.tasks.where((task) => task.id == id).listen(_apply);
-      _resync = events.resyncs.listen((_) => _load());
-      _load();
-    }
+    if (_poll != null) return;
+    final id = _task?.id;
+    // A new screenshot or a finished task is pushed; this slow check only covers a dropped connection.
+    _poll = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (!events.connected.value) _load();
+    });
+    _live = events.tasks.where((task) => task.id == id).listen(_apply);
+    _resync = events.resyncs.listen((_) => _load());
+    _apply(_task);
+    _load();
   }
 
   @override
@@ -61,8 +61,8 @@ class _LiveScreenState extends State<LiveScreen> {
 
   /// Shows the newest step thumbnail, or the final screenshot once there is one. The addresses come
   /// with the task, so no extra request is needed.
-  void _apply(TaskItem task) {
-    if (!mounted) return;
+  void _apply(TaskItem? task) {
+    if (!mounted || task == null) return;
     final index = task.steps.lastIndexWhere((step) => step.screenshotUrl != null);
     final url = index >= 0 ? task.steps[index].screenshotUrl : task.screenshotUrl;
     if (url == null || (url == _url && index == _shown)) return;
@@ -73,39 +73,45 @@ class _LiveScreenState extends State<LiveScreen> {
     });
   }
 
+  Future<void> _openResult() async {
+    final task = _task;
+    if (task == null) return;
+    var latest = task;
+    if (task.id != null) {
+      try {
+        latest = await omniApi.getTask(task.id!);
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    Navigator.of(context).pushNamed('/result', arguments: latest);
+  }
+
   @override
   Widget build(BuildContext context) {
-    final args = ModalRoute.of(context)?.settings.arguments;
-    final task = args is TaskItem ? args : TaskItem(title: args as String? ?? kDefaultTask, when: 'Now', status: TaskStatus.running);
-
+    final textTheme = Theme.of(context).textTheme;
     return Scaffold(
-      appBar: AppBar(title: const Text('Live'), leading: const BackButton()),
-      body: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-        child: Column(
-          children: [
-            Expanded(child: ScreenPreview(url: _url, headers: omniApi.imageHeaders(_url))),
-            if (_caption.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text('After: $_caption', style: Theme.of(context).textTheme.bodySmall),
+      appBar: AppBar(title: const Text('Live view')),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(Gap.page, 8, Gap.page, Gap.page),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: ScreenPreview(url: _url, headers: omniApi.imageHeaders(_url))),
+              if (_caption.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text(
+                  'After: $_caption',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: textTheme.bodySmall?.copyWith(color: AppColors.textMuted),
+                ),
+              ],
+              const SizedBox(height: 16),
+              OutlinedButton(onPressed: _openResult, child: const Text('View result')),
             ],
-            const SizedBox(height: 16),
-            OutlinedButton(
-              onPressed: () async {
-                if (task.id != null) {
-                  try {
-                    final latest = await omniApi.getTask(task.id!);
-                    if (!context.mounted) return;
-                    Navigator.of(context).pushNamed('/result', arguments: latest);
-                    return;
-                  } catch (_) {}
-                }
-                if (!context.mounted) return;
-                Navigator.of(context).pushNamed('/result', arguments: task);
-              },
-              child: const Text('Stop'),
-            ),
-          ],
+          ),
         ),
       ),
     );

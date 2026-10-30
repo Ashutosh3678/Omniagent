@@ -85,6 +85,23 @@ class TaskItem {
   }
 }
 
+/// An app a PC can open, as its OmniAgent program reported it.
+class AppInfo {
+  const AppInfo({required this.id, required this.label, this.needsWorkspace = false});
+
+  final String id;
+  final String label;
+
+  /// True for apps that work inside a folder chosen on the PC (Claude Code).
+  final bool needsWorkspace;
+
+  factory AppInfo.fromJson(Map<String, dynamic> map) => AppInfo(
+        id: map['id'] as String,
+        label: map['label'] as String? ?? map['id'] as String,
+        needsWorkspace: map['needs_workspace'] as bool? ?? false,
+      );
+}
+
 class PcDevice {
   const PcDevice({
     required this.name,
@@ -94,6 +111,8 @@ class PcDevice {
     this.revoked = false,
     this.permittedApps = const [],
     this.actions = const [],
+    this.apps = const [],
+    this.workspaces = const [],
     this.expiresAt,
   });
 
@@ -106,6 +125,10 @@ class PcDevice {
 
   /// What the PC's agent says it can do (empty until it has connected).
   final List<String> actions;
+
+  /// The apps this PC can open, and the folder names set up on it (empty until it has connected).
+  final List<AppInfo> apps;
+  final List<String> workspaces;
   final DateTime? expiresAt;
 
   bool get canBrowse => actions.contains('browser_navigate');
@@ -121,6 +144,12 @@ class PcDevice {
         ],
         actions: [
           for (final action in (map['actions'] as List<dynamic>? ?? const [])) action as String,
+        ],
+        apps: [
+          for (final app in (map['apps'] as List<dynamic>? ?? const [])) AppInfo.fromJson(app as Map<String, dynamic>),
+        ],
+        workspaces: [
+          for (final name in (map['workspaces'] as List<dynamic>? ?? const [])) name as String,
         ],
         expiresAt: map['expires_at'] == null ? null : DateTime.parse(map['expires_at'] as String).toLocal(),
       );

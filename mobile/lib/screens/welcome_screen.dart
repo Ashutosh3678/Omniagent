@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../theme.dart';
+import '../widgets.dart';
 
 class WelcomeScreen extends StatefulWidget {
   const WelcomeScreen({super.key});
@@ -16,6 +18,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   final _password = TextEditingController();
   bool _busy = false;
   bool _slow = false;
+  bool _hidePassword = true;
   Timer? _slowTimer;
   String? _error;
 
@@ -42,6 +45,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
           : 'Enter your password.');
       return;
     }
+    FocusScope.of(context).unfocus();
     setState(() {
       _busy = true;
       _slow = false;
@@ -78,70 +82,107 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
 
     return Scaffold(
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 56, 24, 24),
-          child: Column(
-            children: [
-              Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  color: scheme.primary,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Icon(Icons.desktop_windows_outlined, color: scheme.onPrimary, size: 32),
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Align(
+                    child: Container(
+                      width: 76,
+                      height: 76,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [AppColors.primary, AppColors.secondary],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(22),
+                      ),
+                      child: const Icon(Icons.bolt_rounded, color: AppColors.onPrimary, size: 40),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    'OmniAgent',
+                    textAlign: TextAlign.center,
+                    style: textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Control your PC from your phone.',
+                    textAlign: TextAlign.center,
+                    style: textTheme.bodyMedium?.copyWith(color: AppColors.textMuted),
+                  ),
+                  const SizedBox(height: 36),
+                  TextField(
+                    controller: _email,
+                    enabled: !_busy,
+                    keyboardType: TextInputType.emailAddress,
+                    textInputAction: TextInputAction.next,
+                    autofillHints: const [AutofillHints.email],
+                    decoration: const InputDecoration(
+                      labelText: 'Email',
+                      prefixIcon: Icon(Icons.mail_outline_rounded),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: _password,
+                    enabled: !_busy,
+                    obscureText: _hidePassword,
+                    autofillHints: const [AutofillHints.password],
+                    decoration: InputDecoration(
+                      labelText: 'Password',
+                      prefixIcon: const Icon(Icons.lock_outline_rounded),
+                      suffixIcon: IconButton(
+                        tooltip: _hidePassword ? 'Show password' : 'Hide password',
+                        icon: Icon(
+                          _hidePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                        ),
+                        onPressed: () => setState(() => _hidePassword = !_hidePassword),
+                      ),
+                    ),
+                    onSubmitted: (_) => _submit(signUp: false),
+                  ),
+                  if (_slow) ...[
+                    const SizedBox(height: 14),
+                    const ErrorBanner(
+                      'Waking up the server. The first time can take up to a minute.',
+                      color: AppColors.secondary,
+                    ),
+                  ],
+                  if (_error != null) ...[
+                    const SizedBox(height: 14),
+                    ErrorBanner(_error!),
+                  ],
+                  const SizedBox(height: 24),
+                  FilledButton(
+                    onPressed: _busy ? null : () => _submit(signUp: false),
+                    child: _busy
+                        ? const SizedBox(
+                            height: 20,
+                            width: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Log in'),
+                  ),
+                  const SizedBox(height: 12),
+                  OutlinedButton(
+                    onPressed: _busy ? null : () => _submit(signUp: true),
+                    child: const Text('Sign up'),
+                  ),
+                ],
               ),
-              const SizedBox(height: 16),
-              Text('OmniAgent', style: Theme.of(context).textTheme.headlineSmall),
-              const SizedBox(height: 40),
-              TextField(
-                controller: _email,
-                enabled: !_busy,
-                keyboardType: TextInputType.emailAddress,
-                autofillHints: const [AutofillHints.email],
-                decoration: const InputDecoration(labelText: 'Email'),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _password,
-                enabled: !_busy,
-                obscureText: true,
-                autofillHints: const [AutofillHints.password],
-                decoration: const InputDecoration(labelText: 'Password'),
-                onSubmitted: (_) => _submit(signUp: false),
-              ),
-              if (_slow) ...[
-                const SizedBox(height: 16),
-                Text(
-                  'Waking up the server. The first time can take up to a minute.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
-              if (_error != null) ...[
-                const SizedBox(height: 16),
-                Text(_error!, style: TextStyle(color: scheme.error)),
-              ],
-              const SizedBox(height: 24),
-              FilledButton(
-                onPressed: _busy ? null : () => _submit(signUp: false),
-                child: _busy
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Text('Log in'),
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton(
-                onPressed: _busy ? null : () => _submit(signUp: true),
-                child: const Text('Sign up'),
-              ),
-            ],
+            ),
           ),
         ),
       ),
