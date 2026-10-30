@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 
+import 'api/events.dart';
 import 'api/session.dart';
 import 'app_shell.dart';
 import 'screens/execution_screen.dart';
@@ -43,6 +44,7 @@ class _OmniAgentAppState extends State<OmniAgentApp> {
   void _onSessionChanged() {
     final signedIn = appSession.isSignedIn;
     if (_wasSignedIn && !signedIn) {
+      events.stop();
       _navigator.currentState?.pushNamedAndRemoveUntil('/', (_) => false);
     }
     _wasSignedIn = signedIn;

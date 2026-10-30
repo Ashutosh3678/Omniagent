@@ -18,6 +18,14 @@ login and settings are still placeholders.
 Bottom tabs: **Home, Devices, History, Settings**. Execution, Live, and
 Result open as stack screens.
 
+## Live updates
+
+After login the app keeps one WebSocket open to `/api/v1/events` (`lib/api/events.dart`). The
+Home, Devices, History, Execution and Live screens update from it; a task's progress, a new
+step screenshot, a PC going offline and a cancel all show up within milliseconds. If the
+connection drops it reconnects with growing waits (1s up to 30s), reloads what it missed, and
+meanwhile the screens fall back to slow polling. An expired login signs you out.
+
 ## Run
 
 ```powershell

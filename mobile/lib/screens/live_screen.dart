@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../api/events.dart';
 import '../mock_data.dart';
 import '../models.dart';
 import '../widgets.dart';
@@ -25,16 +26,36 @@ class _LiveScreenState extends State<LiveScreen> {
     return args is TaskItem ? args : null;
   }
 
+  StreamSubscription<TaskItem>? _live;
+  StreamSubscription<void>? _resync;
+  int _shown = -1;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _poll ??= Timer.periodic(const Duration(seconds: 2), (_) => _load());
-    _load();
+    if (_poll == null) {
+      final id = _task?.id;
+      // A new screenshot or a finished task is pushed; this slow check only covers a dropped connection.
+      _poll = Timer.periodic(const Duration(seconds: 5), (_) {
+        if (!events.connected.value) _load();
+      });
+      _live = events.tasks.where((task) => task.id == id).listen((task) {
+        final latest = task.steps.lastIndexWhere((step) => step.hasScreenshot);
+        final finished = task.status == TaskStatus.completed ||
+            task.status == TaskStatus.partial ||
+            task.status == TaskStatus.failed;
+        if (latest != _shown || finished) _load();
+      });
+      _resync = events.resyncs.listen((_) => _load());
+      _load();
+    }
   }
 
   @override
   void dispose() {
     _poll?.cancel();
+    _live?.cancel();
+    _resync?.cancel();
     super.dispose();
   }
 
@@ -50,6 +71,7 @@ class _LiveScreenState extends State<LiveScreen> {
       if (index >= 0) {
         bytes = await omniApi.getStepScreenshot(id, index);
         caption = latest.steps[index].name;
+        _shown = index;
       }
       bytes ??= await omniApi.getScreenshot(id);
       if (mounted && bytes != null) {

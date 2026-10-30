@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../api/events.dart';
 import '../mock_data.dart';
 import '../models.dart';
 import '../widgets.dart';
@@ -16,10 +19,35 @@ class _HistoryScreenState extends State<HistoryScreen> {
   String _filter = 'All';
   List<TaskItem> _items = const [];
 
+  final List<StreamSubscription<dynamic>> _live = [];
+
   @override
   void initState() {
     super.initState();
     _load();
+    _live.addAll([
+      events.tasks.listen(_upsert),
+      events.resyncs.listen((_) => _load()),
+    ]);
+  }
+
+  @override
+  void dispose() {
+    for (final subscription in _live) {
+      subscription.cancel();
+    }
+    super.dispose();
+  }
+
+  /// A task changed on the server: update it in place, or add it at the top if it is new.
+  void _upsert(TaskItem task) {
+    if (!mounted) return;
+    setState(() {
+      final index = _items.indexWhere((item) => item.id == task.id);
+      _items = index >= 0
+          ? [..._items.sublist(0, index), task, ..._items.sublist(index + 1)]
+          : [task, ..._items];
+    });
   }
 
   Future<void> _load() async {

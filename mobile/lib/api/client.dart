@@ -54,23 +54,7 @@ class OmniApi {
 
   Future<List<PcDevice>> listAgents() async {
     final body = await _get('/api/v1/agents');
-    return (body as List<dynamic>).map((item) {
-      final map = item as Map<String, dynamic>;
-      return PcDevice(
-        id: map['id'] as String?,
-        name: map['name'] as String,
-        hostName: map['hostname'] as String,
-        online: map['online'] as bool? ?? false,
-        revoked: map['status'] == 'revoked',
-        permittedApps: [
-          for (final app in (map['permitted_apps'] as List<dynamic>? ?? const [])) app as String,
-        ],
-        actions: [
-          for (final action in (map['actions'] as List<dynamic>? ?? const [])) action as String,
-        ],
-        expiresAt: map['expires_at'] == null ? null : DateTime.parse(map['expires_at'] as String).toLocal(),
-      );
-    }).toList();
+    return [for (final item in body as List<dynamic>) PcDevice.fromJson(item as Map<String, dynamic>)];
   }
 
   Future<PairingCode> createPairingCode() async {

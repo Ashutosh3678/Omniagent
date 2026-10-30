@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 
 from fastapi import WebSocket
@@ -10,8 +12,10 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.db import Base, get_engine, session_scope
-from app.models import Agent, AuditEvent, Task, User, utcnow
+from app.models import Agent, AgentPublic, AuditEvent, Task, TaskPublic, User, utcnow
 from app.orm import AgentRow, AuditRow, PairingCodeRow, ScreenshotRow, StepScreenshotRow, TaskRow, UserRow
+
+logger = logging.getLogger(__name__)
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -89,6 +93,29 @@ class Store:
     def __init__(self) -> None:
         self.sockets: dict[str, WebSocket] = {}
         self._last_audit_ts = utcnow()
+        self._listeners: list[Callable[[str, str, dict], None]] = []
+
+    def subscribe(self, listener: Callable[[str, str, dict], None]) -> None:
+        """listener(kind, user_id, payload) is called after a task or PC changes. kind: "task" | "agent"."""
+        if listener not in self._listeners:
+            self._listeners.append(listener)
+
+    def _emit(self, kind: str, user_id: str | None, payload: dict) -> None:
+        if user_id is None:
+            return
+        for listener in self._listeners:
+            try:
+                listener(kind, user_id, payload)
+            except Exception:  # noqa: BLE001 - a broken listener must never break a database write
+                logger.exception("Store listener failed")
+
+    def _emit_task(self, task: Task) -> None:
+        self._emit("task", task.user_id, TaskPublic.from_task(task).model_dump(mode="json"))
+
+    def _emit_agent(self, agent_id: str) -> None:
+        agent = self.get_agent(agent_id)
+        if agent is not None:
+            self._emit("agent", agent.user_id, AgentPublic.from_agent(agent).model_dump(mode="json"))
 
     def reset(self) -> None:
         """Wipe all data. Only allowed on SQLite (tests)."""
@@ -204,6 +231,7 @@ class Store:
     def add_agent(self, agent: Agent, token_hash: str) -> None:
         with session_scope() as db:
             db.add(AgentRow(**agent.model_dump(), token_hash=token_hash, created_at=utcnow()))
+        self._emit_agent(agent.id)
 
     def get_agent(self, agent_id: str, user_id: str | None = None) -> Agent | None:
         """With user_id, only returns the agent if that user owns it."""
@@ -223,12 +251,14 @@ class Store:
             row.permitted_apps = list(agent.permitted_apps)
             row.expires_at = agent.expires_at
             row.revoked_at = agent.revoked_at
+        self._emit_agent(agent.id)
 
     def set_capabilities(self, agent_id: str, actions: list[str]) -> None:
         with session_scope() as db:
             row = db.get(AgentRow, agent_id)
             if row is not None:
                 row.capabilities = sorted(set(actions))
+        self._emit_agent(agent_id)
 
     def get_agent_token_hash(self, agent_id: str) -> str | None:
         with session_scope() as db:
@@ -260,6 +290,7 @@ class Store:
             row.online = True
             row.connected_at = utcnow()
         self.sockets[agent_id] = socket
+        self._emit_agent(agent_id)
 
     def fail_active_tasks(self, agent_id: str, reason: str) -> list[Task]:
         failed: list[Task] = []
@@ -278,6 +309,8 @@ class Store:
                 for key, value in _task_values(task).items():
                     setattr(row, key, value)
                 failed.append(task)
+        for task in failed:
+            self._emit_task(task)
         return failed
 
     def set_offline(self, agent_id: str) -> list[Task]:
@@ -286,6 +319,7 @@ class Store:
             agent = db.get(AgentRow, agent_id)
             if agent:
                 agent.online = False
+        self._emit_agent(agent_id)
         return self.fail_active_tasks(agent_id, "Agent disconnected")
 
     # tasks
@@ -297,6 +331,7 @@ class Store:
             else:
                 for key, value in _task_values(task).items():
                     setattr(row, key, value)
+        self._emit_task(task)
 
     def get_task(self, task_id: str, user_id: str | None = None) -> Task | None:
         """With user_id, only returns the task if that user owns it."""

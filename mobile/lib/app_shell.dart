@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'api/events.dart';
 import 'screens/devices_screen.dart';
 import 'screens/history_screen.dart';
 import 'screens/home_screen.dart';
@@ -14,6 +15,12 @@ class AppShell extends StatefulWidget {
 
 class _AppShellState extends State<AppShell> {
   int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    events.start();
+  }
 
   static const _pages = [
     HomeScreen(),

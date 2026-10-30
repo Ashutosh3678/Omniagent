@@ -96,6 +96,21 @@ class PcDevice {
 
   bool get canBrowse => actions.contains('browser_navigate');
 
+  factory PcDevice.fromJson(Map<String, dynamic> map) => PcDevice(
+        id: map['id'] as String?,
+        name: map['name'] as String,
+        hostName: map['hostname'] as String,
+        online: map['online'] as bool? ?? false,
+        revoked: map['status'] == 'revoked',
+        permittedApps: [
+          for (final app in (map['permitted_apps'] as List<dynamic>? ?? const [])) app as String,
+        ],
+        actions: [
+          for (final action in (map['actions'] as List<dynamic>? ?? const [])) action as String,
+        ],
+        expiresAt: map['expires_at'] == null ? null : DateTime.parse(map['expires_at'] as String).toLocal(),
+      );
+
   bool get expired => expiresAt != null && !expiresAt!.isAfter(DateTime.now());
 
   /// Whether tasks can be sent to this PC right now.

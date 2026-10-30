@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../api/events.dart';
 import '../mock_data.dart';
 import '../models.dart';
 import '../theme.dart';
@@ -17,6 +18,8 @@ class ExecutionScreen extends StatefulWidget {
 class _ExecutionScreenState extends State<ExecutionScreen> {
   TaskItem? _task;
   Timer? _poll;
+  StreamSubscription<TaskItem>? _live;
+  StreamSubscription<void>? _resync;
   bool _openedResult = false;
 
   @override
@@ -27,7 +30,12 @@ class _ExecutionScreenState extends State<ExecutionScreen> {
       if (args is TaskItem) {
         _task = args;
         if (args.id != null) {
-          _poll = Timer.periodic(const Duration(seconds: 1), (_) => _refresh());
+          _live = events.tasks.where((task) => task.id == args.id).listen(_apply);
+          _resync = events.resyncs.listen((_) => _refresh());
+          // The live stream does the work; this slow check only covers a dropped connection.
+          _poll = Timer.periodic(const Duration(seconds: 3), (_) {
+            if (!events.connected.value) _refresh();
+          });
           _refresh();
         }
       } else if (args is String) {
@@ -41,6 +49,8 @@ class _ExecutionScreenState extends State<ExecutionScreen> {
   @override
   void dispose() {
     _poll?.cancel();
+    _live?.cancel();
+    _resync?.cancel();
     super.dispose();
   }
 
@@ -48,17 +58,22 @@ class _ExecutionScreenState extends State<ExecutionScreen> {
     final id = _task?.id;
     if (id == null) return;
     try {
-      final latest = await omniApi.getTask(id);
-      if (!mounted) return;
-      setState(() => _task = latest);
-      if (!_openedResult && (latest.status == TaskStatus.completed ||
-              latest.status == TaskStatus.partial ||
-              latest.status == TaskStatus.failed)) {
-        _openedResult = true;
-        _poll?.cancel();
-        Navigator.of(context).pushReplacementNamed('/result', arguments: latest);
-      }
+      _apply(await omniApi.getTask(id));
     } catch (_) {}
+  }
+
+  void _apply(TaskItem latest) {
+    if (!mounted) return;
+    setState(() => _task = latest);
+    if (!_openedResult &&
+        (latest.status == TaskStatus.completed ||
+            latest.status == TaskStatus.partial ||
+            latest.status == TaskStatus.failed)) {
+      _openedResult = true;
+      _poll?.cancel();
+      _live?.cancel();
+      Navigator.of(context).pushReplacementNamed('/result', arguments: latest);
+    }
   }
 
   Future<void> _cancel() async {

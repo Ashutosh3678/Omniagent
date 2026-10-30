@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../api/client.dart';
+import '../api/events.dart';
 import '../models.dart';
 import '../widgets.dart';
 
@@ -21,17 +22,25 @@ class _DevicesScreenState extends State<DevicesScreen> {
   bool _busy = false;
   String? _error;
   Timer? _timer;
+  final List<StreamSubscription<dynamic>> _live = [];
 
   @override
   void initState() {
     super.initState();
     _load();
     _timer = Timer.periodic(const Duration(seconds: 4), (_) => _tick());
+    _live.addAll([
+      events.agents.listen((_) => _load(quiet: true)),
+      events.resyncs.listen((_) => _load(quiet: true)),
+    ]);
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    for (final subscription in _live) {
+      subscription.cancel();
+    }
     super.dispose();
   }
 
@@ -40,7 +49,8 @@ class _DevicesScreenState extends State<DevicesScreen> {
     if (pairing != null && !pairing.expiresAt.isAfter(DateTime.now())) {
       setState(() => _pairing = null);
     }
-    _load(quiet: true);
+    // The live stream refreshes this; polling only covers a dropped connection.
+    if (!events.connected.value) _load(quiet: true);
   }
 
   Future<void> _load({bool quiet = false}) async {

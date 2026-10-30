@@ -92,6 +92,22 @@ OMNIAGENT_GROQ_MODEL=openai/gpt-oss-20b   # optional
 
 Your instruction text is sent to Groq's API when the rules do not match it.
 
+## Live updates
+
+`WS /api/v1/events` pushes changes to the phone as they happen instead of the app polling.
+Connect, then send `{"type": "auth", "token": "<access token>"}` as the first message within
+5 seconds (the token is never accepted in the URL, where it would end up in logs). The server
+answers `{"type": "hello"}` and then sends full snapshots:
+
+- `{"type": "task", "task": {...}}` whenever one of your tasks changes (same shape as `GET /tasks/{id}`)
+- `{"type": "agent", "agent": {...}}` whenever one of your PCs connects, disconnects or is edited
+- `{"type": "resync"}` if the phone fell behind: reload everything
+
+Only your own tasks and PCs are sent. Screenshots are not pushed; a step's `has_screenshot`
+flag flips and the app fetches the thumbnail. At most 5 connections per user (close code
+4429 beyond that); close code 4401 means the login is invalid or has expired. The REST
+endpoints stay as they were, for loading the first screen and for catching up after a reconnect.
+
 ## Dispatch rules
 
 A task is sent only if every check passes, and the first failure is refused and

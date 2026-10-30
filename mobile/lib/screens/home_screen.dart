@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
+import '../api/events.dart';
 import '../mock_data.dart';
 import '../models.dart';
 import '../widgets.dart';
@@ -18,16 +21,33 @@ class _HomeScreenState extends State<HomeScreen> {
   List<PcDevice> _agents = const [];
   List<TaskItem> _recent = const [];
   bool _busy = false;
+  final List<StreamSubscription<dynamic>> _live = [];
+  Timer? _debounce;
 
   @override
   void initState() {
     super.initState();
     _task = TextEditingController(text: kDefaultTask);
     _refresh();
+    // Anything that changes on the server refreshes the status chip and recent tasks.
+    _live.addAll([
+      events.tasks.listen((_) => _scheduleRefresh()),
+      events.agents.listen((_) => _scheduleRefresh()),
+      events.resyncs.listen((_) => _scheduleRefresh()),
+    ]);
+  }
+
+  void _scheduleRefresh() {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 250), _refresh);
   }
 
   @override
   void dispose() {
+    _debounce?.cancel();
+    for (final subscription in _live) {
+      subscription.cancel();
+    }
     _task.dispose();
     super.dispose();
   }

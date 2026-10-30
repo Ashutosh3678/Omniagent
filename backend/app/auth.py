@@ -51,12 +51,16 @@ def create_access_token(user_id: str) -> str:
     return jwt.encode(claims, JWT_SECRET, algorithm="HS256")
 
 
-def decode_access_token(token: str) -> str | None:
+def decode_claims(token: str) -> dict | None:
     try:
-        claims = jwt.decode(token, JWT_SECRET, algorithms=["HS256"], options={"require": ["sub", "exp"]})
+        return jwt.decode(token, JWT_SECRET, algorithms=["HS256"], options={"require": ["sub", "exp"]})
     except jwt.PyJWTError:
         return None
-    return str(claims["sub"])
+
+
+def decode_access_token(token: str) -> str | None:
+    claims = decode_claims(token)
+    return str(claims["sub"]) if claims else None
 
 
 def get_current_user(token: str | None = Depends(_oauth2)) -> User:
