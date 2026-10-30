@@ -43,9 +43,19 @@ class _ResultScreenState extends State<ResultScreen> {
             SuccessBadge(label: task.statusLabel),
             const SizedBox(height: 16),
             Text(
-              ok ? (task.summary.isEmpty ? 'Task complete' : task.summary) : (task.error.isEmpty ? 'Task failed' : task.error),
+              ok
+                  ? (task.summary.isEmpty ? 'Task complete' : task.summary)
+                  : (task.error.isEmpty ? (task.status == TaskStatus.partial ? 'Task partly done' : 'Task failed') : task.error),
               style: Theme.of(context).textTheme.titleMedium,
             ),
+            for (final step in task.steps.where((s) => s.status == 'failed' || s.status == 'held_back'))
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  '${step.name}: ${step.detail.isEmpty ? step.status.replaceAll('_', ' ') : step.detail}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
             const SizedBox(height: 16),
             ScreenPreview(height: 160, bytes: _bytes),
             if (task.fileName != null)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import WebSocket
 from sqlalchemy import select, update
@@ -51,7 +51,9 @@ def _task(row: TaskRow) -> Task:
         user_id=row.user_id,
         agent_id=row.agent_id,
         instruction=row.instruction,
-        action=row.action,
+        plan=row.plan,
+        held_back=row.held_back,
+        confidence=row.confidence,
         status=row.status,
         logs=row.logs,
         steps=row.steps,
@@ -68,7 +70,9 @@ def _task_values(task: Task) -> dict:
         "user_id": task.user_id,
         "agent_id": task.agent_id,
         "instruction": task.instruction,
-        "action": task.action.model_dump(mode="json"),
+        "plan": [step.model_dump(mode="json") for step in task.plan],
+        "held_back": [item.model_dump(mode="json") for item in task.held_back],
+        "confidence": task.confidence,
         "status": task.status,
         "logs": [entry.model_dump(mode="json") for entry in task.logs],
         "steps": [step.model_dump(mode="json") for step in task.steps],
@@ -83,6 +87,7 @@ def _task_values(task: Task) -> dict:
 class Store:
     def __init__(self) -> None:
         self.sockets: dict[str, WebSocket] = {}
+        self._last_audit_ts = utcnow()
 
     def reset(self) -> None:
         """Wipe all data. Only allowed on SQLite (tests)."""
@@ -155,6 +160,9 @@ class Store:
         agent_id: str | None = None,
         task_id: str | None = None,
     ) -> None:
+        # Windows clocks can repeat a timestamp; keep audit order strict.
+        created = max(utcnow(), self._last_audit_ts + timedelta(microseconds=1))
+        self._last_audit_ts = created
         with session_scope() as db:
             db.add(
                 AuditRow(
@@ -165,7 +173,7 @@ class Store:
                     event=event,
                     decision=decision,
                     reason=reason,
-                    created_at=utcnow(),
+                    created_at=created,
                 )
             )
 

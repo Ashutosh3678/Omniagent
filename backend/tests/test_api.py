@@ -161,8 +161,20 @@ def test_task_roundtrip_with_connected_agent() -> None:
 
             inbound = ws.receive_json()
             assert inbound["type"] == "task"
-            assert inbound["action"]["type"] == "open_notepad"
-            assert inbound["action"]["message"] == "Hello from OmniAgent"
+            assert inbound["plan"] == [
+                {"index": 0, "action": {"type": "open_app", "app": "notepad"}},
+                {"index": 1, "action": {"type": "type_text", "text": "Hello from OmniAgent"}},
+            ]
+            assert [st["status"] for st in create.json()["steps"]] == ["pending", "pending"]
+            assert create.json()["confidence"] == 1.0
+
+            ws.send_json({"type": "ack", "task_id": inbound["task_id"]})
+            ws.send_json({"type": "step", "task_id": inbound["task_id"], "index": 0, "status": "running"})
+            ws.send_json({"type": "step", "task_id": inbound["task_id"], "index": 0, "status": "success", "detail": "ok"})
+            mid = client.get(f"/api/v1/tasks/{inbound['task_id']}", headers=user).json()
+            assert [st["status"] for st in mid["steps"]] == ["success", "pending"]
+            assert mid["steps"][0]["detail"] == "ok"
+            ws.send_json({"type": "step", "task_id": inbound["task_id"], "index": 1, "status": "success"})
 
             png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"x" * 32).decode()
             ws.send_json(
@@ -171,13 +183,13 @@ def test_task_roundtrip_with_connected_agent() -> None:
                     "task_id": inbound["task_id"],
                     "status": "completed",
                     "summary": "Opened Notepad",
-                    "steps": [{"name": "Open Notepad", "status": "success"}],
                     "screenshot_b64": png,
                 }
             )
 
             fetched = client.get(f"/api/v1/tasks/{inbound['task_id']}", headers=user).json()
             assert fetched["status"] == "completed"
+            assert [st["status"] for st in fetched["steps"]] == ["success", "success"]
             shot = client.get(fetched["screenshot_url"], headers=user)
             assert shot.status_code == 200
             assert shot.headers["content-type"] == "image/png"
@@ -467,7 +479,7 @@ def test_every_dispatch_decision_is_audited() -> None:
             ws.receive_json()
         events = client.get("/api/v1/audit", headers=user).json()
         outcomes = [(e["event"], e["decision"], e["reason"]) for e in events if e["event"].startswith("dispatch")]
-        assert ("dispatch_permitted", "permit", "open_notepad") in outcomes
+        assert ("dispatch_permitted", "permit", "1 step(s)") in outcomes
         assert ("dispatch_denied", "deny", "invalid_instruction") in outcomes
         assert ("dispatch_denied", "deny", "device_offline") in outcomes
         permitted = next(e for e in events if e["event"] == "dispatch_permitted")
@@ -481,3 +493,124 @@ def test_audit_is_private_to_each_user() -> None:
         _register(client, alice)
         assert client.get("/api/v1/audit", headers=alice).json()
         assert client.get("/api/v1/audit", headers=bob).json() == []
+
+
+# plans
+def test_result_overwrite_is_ignored_after_task_finished() -> None:
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            task = client.post("/api/v1/tasks", headers=user, json={"instruction": "open notepad"}).json()
+            inbound = ws.receive_json()
+            client.post(f"/api/v1/tasks/{task['id']}/cancel", headers=user)
+            ws.send_json({"type": "result", "task_id": inbound["task_id"], "status": "completed"})
+            ws.send_json({"type": "step", "task_id": inbound["task_id"], "index": 0, "status": "success"})
+            fetched = client.get(f"/api/v1/tasks/{task['id']}", headers=user).json()
+            assert fetched["status"] == "failed"
+            assert fetched["error"] == "Cancelled"
+
+
+def test_agent_reported_partial_and_unfinished_steps_are_skipped() -> None:
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            task = client.post(
+                "/api/v1/tasks", headers=user, json={"instruction": "open notepad and type hi"}
+            ).json()
+            inbound = ws.receive_json()
+            ws.send_json({"type": "step", "task_id": inbound["task_id"], "index": 0, "status": "success"})
+            ws.send_json({"type": "step", "task_id": inbound["task_id"], "index": 1, "status": "failed", "detail": "no focus"})
+            ws.send_json({"type": "result", "task_id": inbound["task_id"], "status": "partial", "summary": "Stopped at step 2"})
+            fetched = client.get(f"/api/v1/tasks/{task['id']}", headers=user).json()
+            assert fetched["status"] == "partial"
+            assert [st["status"] for st in fetched["steps"]] == ["success", "failed"]
+
+
+def test_step_updates_with_bad_index_or_status_are_ignored() -> None:
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            task = client.post("/api/v1/tasks", headers=user, json={"instruction": "open notepad"}).json()
+            inbound = ws.receive_json()
+            for bad in ({"index": 5, "status": "success"}, {"index": -1, "status": "success"}, {"index": 0, "status": "held_back"}, {"index": "0", "status": "success"}):
+                ws.send_json({"type": "step", "task_id": inbound["task_id"], **bad})
+            fetched = client.get(f"/api/v1/tasks/{task['id']}", headers=user).json()
+            assert [st["status"] for st in fetched["steps"]] == ["pending"]
+
+
+def test_agent_cannot_update_another_agents_task() -> None:
+    with TestClient(app) as client:
+        user = _signup(client)
+        first_id, first_device = _register(client, user)
+        second_id, second_device = _register(client, user)
+        with _ws(client, first_id, first_device) as ws1, _ws(client, second_id, second_device) as ws2:
+            ws1.receive_json()
+            ws2.receive_json()
+            task = client.post(
+                "/api/v1/tasks", headers=user, json={"instruction": "open notepad", "agent_id": first_id}
+            ).json()
+            inbound = ws1.receive_json()
+            ws2.send_json({"type": "result", "task_id": inbound["task_id"], "status": "completed"})
+            ws2.send_json({"type": "step", "task_id": inbound["task_id"], "index": 0, "status": "success"})
+            fetched = client.get(f"/api/v1/tasks/{task['id']}", headers=user).json()
+            assert fetched["status"] == "running"
+            assert fetched["steps"][0]["status"] == "pending"
+
+
+def test_held_back_steps_are_audited_and_result_is_partial(monkeypatch) -> None:
+    from app import actions
+
+    monkeypatch.setattr(
+        "app.routers.tasks.plan_from_instruction",
+        lambda _text: [
+            {"action": {"type": "open_app", "app": "notepad"}, "confidence": 0.9},
+            {"action": {"type": "click", "target": "Save"}, "confidence": 0.4},
+            {"action": {"type": "type_text", "text": "later"}},
+        ],
+    )
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            created = client.post("/api/v1/tasks", headers=user, json={"instruction": "anything"})
+            assert created.status_code == 201
+            body = created.json()
+            assert [st["status"] for st in body["steps"]] == ["pending", "held_back", "held_back"]
+            assert [h["reason"] for h in body["held_back"]] == ["not_supported", "blocked_by_earlier_step"]
+            assert body["confidence"] == 0.9
+
+            inbound = ws.receive_json()
+            assert [s["action"]["type"] for s in inbound["plan"]] == ["open_app"]
+            ws.send_json({"type": "step", "task_id": inbound["task_id"], "index": 0, "status": "success"})
+            ws.send_json({"type": "result", "task_id": inbound["task_id"], "status": "completed"})
+            fetched = client.get(f"/api/v1/tasks/{body['id']}", headers=user).json()
+            assert fetched["status"] == "partial"
+            assert [st["status"] for st in fetched["steps"]] == ["success", "held_back", "held_back"]
+
+        events = client.get("/api/v1/audit", headers=user).json()
+        held = [e["reason"] for e in events if e["event"] == "plan_step_held_back"]
+        assert sorted(held) == ["step 2: not_supported", "step 3: blocked_by_earlier_step"]
+
+
+def test_plan_with_nothing_runnable_is_refused_and_creates_no_task(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.routers.tasks.plan_from_instruction",
+        lambda _text: [{"action": {"type": "click", "target": "Save"}}],
+    )
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            response = client.post("/api/v1/tasks", headers=user, json={"instruction": "anything"})
+            assert response.status_code == 422
+            assert client.get("/api/v1/tasks", headers=user).json() == []
+            events = client.get("/api/v1/audit", headers=user).json()
+            assert events[0]["event"] == "dispatch_denied" and events[0]["reason"] == "not_supported"

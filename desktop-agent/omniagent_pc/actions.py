@@ -131,6 +131,79 @@ def type_message(session: NotepadSession, message: str) -> tuple[str, StepResult
         return "", StepResult("Type message", "Failed", str(exc))
 
 
+def append_text(session: NotepadSession, text: str) -> tuple[str, StepResult]:
+    """Type `text` at the end of the Notepad document (without clearing it)."""
+    try:
+        edit = _focused_document(session)
+        if edit is None:
+            return "", StepResult("Type text", "Failed", "Could not find Notepad's text area")
+
+        before = _read_control_text(edit)
+        edit.type_keys("^{END}", pause=0.02)
+        edit.type_keys(_escape_type_keys(text), with_spaces=True, with_newlines=True, pause=0.02)
+        time.sleep(0.25)
+
+        observed = _read_control_text(edit) or _read_via_clipboard(session.spec())
+        if _flatten(text) not in _flatten(observed) or len(observed) <= len(before):
+            return observed, StepResult(
+                "Type text", "Failed", f"Typed text was not confirmed in Notepad (saw {observed!r})"
+            )
+        return observed, StepResult("Type text", "Success", f"Typed {text!r}")
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Typing into Notepad failed")
+        return "", StepResult("Type text", "Failed", str(exc))
+
+
+# pywinauto send-keys names for the keys the backend allows.
+_KEY_NAMES = {
+    "enter": "{ENTER}",
+    "tab": "{TAB}",
+    "escape": "{ESC}",
+    "backspace": "{BACKSPACE}",
+    "delete": "{DELETE}",
+    "up": "{UP}",
+    "down": "{DOWN}",
+    "left": "{LEFT}",
+    "right": "{RIGHT}",
+    "home": "{HOME}",
+    "end": "{END}",
+    "pageup": "{PGUP}",
+    "pagedown": "{PGDN}",
+}
+
+
+def press_key(session: NotepadSession, key: str, modifiers: list[str]) -> StepResult:
+    """Press one allowed key (optionally with Ctrl/Shift) in the Notepad document."""
+    name = _KEY_NAMES.get(key, key if len(key) == 1 else None)
+    if name is None:
+        return StepResult("Press key", "Failed", f"Key {key!r} is not supported")
+    prefix = ("^" if "ctrl" in modifiers else "") + ("+" if "shift" in modifiers else "")
+    try:
+        edit = _focused_document(session)
+        if edit is None:
+            return StepResult("Press key", "Failed", "Could not find Notepad's text area")
+        edit.type_keys(prefix + name, pause=0.02)
+        time.sleep(0.15)
+        return StepResult("Press key", "Success", f"Pressed {prefix}{name}")
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Key press failed")
+        return StepResult("Press key", "Failed", str(exc))
+
+
+def _focused_document(session: NotepadSession):
+    window = session.spec()
+    window.set_focus()
+    time.sleep(0.2)
+    edit = _find_document_control(window, session.backend)
+    if edit is not None:
+        edit.set_focus()
+    return edit
+
+
+def _flatten(text: str) -> str:
+    return text.replace("\r", "").replace("\n", "")
+
+
 def read_notepad_text(session: NotepadSession) -> str:
     edit = _find_document_control(session.spec(), session.backend)
     if edit is None:
@@ -299,6 +372,8 @@ def _escape_type_keys(text: str) -> str:
 
 __all__ = [
     "NotepadSession",
+    "append_text",
+    "press_key",
     "launch_notepad",
     "notepad_is_visible",
     "read_notepad_text",

@@ -59,7 +59,9 @@ expires after 10 minutes. The first run pairs this PC with your account and
 saves a per-device token in `~/.omniagent/agent.json`; later runs reuse it and
 need no code. If you remove the PC in the app, or its access expires, the
 backend refuses it: run again with `--reset` and a new code.
-The agent only runs allowlisted Notepad tasks.
+The agent runs validated plans step by step (open Notepad, type text, press keys,
+wait, screenshot) and stops at the first failing step. Anything else is refused.
+Tests for the plan runner and message protocol: run `pytest` in this folder.
 
 Type a custom message:
 

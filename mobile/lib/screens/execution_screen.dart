@@ -51,7 +51,9 @@ class _ExecutionScreenState extends State<ExecutionScreen> {
       final latest = await omniApi.getTask(id);
       if (!mounted) return;
       setState(() => _task = latest);
-      if (!_openedResult && (latest.status == TaskStatus.completed || latest.status == TaskStatus.failed)) {
+      if (!_openedResult && (latest.status == TaskStatus.completed ||
+              latest.status == TaskStatus.partial ||
+              latest.status == TaskStatus.failed)) {
         _openedResult = true;
         _poll?.cancel();
         Navigator.of(context).pushReplacementNamed('/result', arguments: latest);
@@ -112,13 +114,14 @@ class _ExecutionScreenState extends State<ExecutionScreen> {
             for (var i = 0; i < steps.length; i++)
               _StepRow(
                 label: steps[i].name,
-                state: steps[i].status == 'success'
-                    ? _StepState.done
-                    : steps[i].status == 'failed'
-                        ? _StepState.failed
-                        : (i == activeIndex || steps[i].status == 'running')
-                            ? _StepState.active
-                            : _StepState.todo,
+                detail: steps[i].status == 'failed' || steps[i].status == 'held_back' ? steps[i].detail : '',
+                state: switch (steps[i].status) {
+                  'success' => _StepState.done,
+                  'failed' => _StepState.failed,
+                  'held_back' => _StepState.held,
+                  'skipped' => _StepState.skipped,
+                  _ => (i == activeIndex || steps[i].status == 'running') ? _StepState.active : _StepState.todo,
+                },
               ),
             const Spacer(),
             OutlinedButton(
@@ -132,13 +135,14 @@ class _ExecutionScreenState extends State<ExecutionScreen> {
   }
 }
 
-enum _StepState { done, active, todo, failed }
+enum _StepState { done, active, todo, failed, held, skipped }
 
 class _StepRow extends StatelessWidget {
-  const _StepRow({required this.label, required this.state});
+  const _StepRow({required this.label, required this.state, this.detail = ''});
 
   final String label;
   final _StepState state;
+  final String detail;
 
   @override
   Widget build(BuildContext context) {
@@ -147,6 +151,8 @@ class _StepRow extends StatelessWidget {
       _StepState.active => Theme.of(context).colorScheme.primary,
       _StepState.failed => Theme.of(context).colorScheme.error,
       _StepState.todo => Theme.of(context).colorScheme.outlineVariant,
+      _StepState.held => Theme.of(context).colorScheme.tertiary,
+      _StepState.skipped => Theme.of(context).colorScheme.outlineVariant,
     };
 
     return Padding(
@@ -155,11 +161,19 @@ class _StepRow extends StatelessWidget {
         children: [
           CircleAvatar(radius: 6, backgroundColor: color),
           const SizedBox(width: 12),
-          Text(
-            label,
-            style: state == _StepState.active
-                ? Theme.of(context).textTheme.titleSmall
-                : Theme.of(context).textTheme.bodyLarge,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: state == _StepState.active
+                      ? Theme.of(context).textTheme.titleSmall
+                      : Theme.of(context).textTheme.bodyLarge,
+                ),
+                if (detail.isNotEmpty) Text(detail, style: Theme.of(context).textTheme.bodySmall),
+              ],
+            ),
           ),
         ],
       ),

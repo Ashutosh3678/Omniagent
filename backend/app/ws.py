@@ -10,12 +10,14 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.auth import device_token_matches, token_from_header
-from app.config import TASK_TIMEOUT_SECONDS
-from app.models import Step, Task
+from app.config import STEP_TIMEOUT_SECONDS, TASK_TIMEOUT_SECONDS
+from app.models import Task, utcnow
 from app.store import store
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+_STEP_STATUSES = {"running", "success", "failed", "skipped"}
 
 
 async def send_task(agent_id: str, task: Task) -> bool:
@@ -27,7 +29,7 @@ async def send_task(agent_id: str, task: Task) -> bool:
             {
                 "type": "task",
                 "task_id": task.id,
-                "action": task.action.model_dump(),
+                "plan": [{"index": s.index, "action": s.action} for s in task.plan],
             }
         )
         return True
@@ -36,8 +38,8 @@ async def send_task(agent_id: str, task: Task) -> bool:
         return False
 
 
-async def fail_if_timed_out(task_id: str) -> None:
-    await asyncio.sleep(TASK_TIMEOUT_SECONDS)
+async def fail_if_timed_out(task_id: str, step_count: int = 1) -> None:
+    await asyncio.sleep(max(TASK_TIMEOUT_SECONDS, STEP_TIMEOUT_SECONDS * step_count))
     task = store.get_task(task_id)
     if task and task.status in {"pending", "running"}:
         task.status = "failed"
@@ -93,23 +95,37 @@ async def _handle_agent_message(agent_id: str, message: dict[str, Any]) -> None:
         store.save_task(task)
         return
 
-    if kind == "progress" and task and task.agent_id == agent_id:
-        if message.get("log"):
-            task.log(str(message["log"]))
-        if message.get("steps"):
-            task.steps = [Step.model_validate(step) for step in message["steps"]]
-        if task.status == "pending":
-            task.status = "running"
+    if kind == "log" and task and task.agent_id == agent_id:
+        task.log(str(message.get("log") or ""))
         store.save_task(task)
         return
 
+    if kind == "step" and task and task.agent_id == agent_id and task.status in {"pending", "running"}:
+        index = message.get("index")
+        new_status = message.get("status")
+        if isinstance(index, int) and 0 <= index < len(task.plan) and new_status in _STEP_STATUSES:
+            task.steps[index].status = new_status
+            task.steps[index].detail = str(message.get("detail") or "")
+            task.updated_at = utcnow()
+            store.save_task(task)
+        return
+
     if kind == "result" and task and task.agent_id == agent_id:
-        status = message.get("status")
-        task.status = "completed" if status == "completed" else "failed"
+        if task.status in {"completed", "partial", "failed"}:
+            return  # already finished (cancelled, timed out, removed): do not overwrite
+        reported = message.get("status")
+        if reported == "completed":
+            # The agent ran everything it was sent; held-back steps mean the plan is incomplete.
+            task.status = "partial" if task.held_back else "completed"
+        elif reported == "partial":
+            task.status = "partial"
+        else:
+            task.status = "failed"
+        for step in task.steps:
+            if step.status in {"pending", "running"}:
+                step.status = "skipped"
         task.summary = str(message.get("summary") or "")
         task.error = str(message.get("error") or "")
-        if message.get("steps"):
-            task.steps = [Step.model_validate(step) for step in message["steps"]]
         screenshot_b64 = message.get("screenshot_b64")
         if screenshot_b64:
             try:

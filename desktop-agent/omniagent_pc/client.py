@@ -16,13 +16,12 @@ from typing import Any
 
 import websockets
 
-from omniagent_pc.runner import run_phase1_task
+from omniagent_pc.plan_runner import Executor, PlanOutcome, RunContext, run_plan
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_API = os.environ.get("OMNIAGENT_API", "http://127.0.0.1:8000")
 CREDENTIALS_FILE = Path(os.environ.get("OMNIAGENT_HOME", Path.home() / ".omniagent")) / "agent.json"
-ALLOWED_ACTIONS = frozenset({"open_notepad"})
 
 
 def _request(method: str, url: str, token: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -84,61 +83,74 @@ def _ws_url(api: str, agent_id: str) -> str:
     return f"{base}/api/v1/agents/{agent_id}/ws"
 
 
-async def handle_task(ws: Any, message: dict[str, Any]) -> None:
+def _run_blocking(
+    plan: list[dict[str, Any]],
+    executors: dict[str, Executor],
+    context: RunContext,
+    report: Any,
+) -> PlanOutcome:
+    """Runs on a worker thread: UI automation blocks."""
+    outcome = run_plan(plan, executors, context, report)
+    if context.screenshot_path is None:
+        try:
+            from omniagent_pc.screenshot import capture_screen
+
+            path, _ = capture_screen()
+            context.screenshot_path = str(path) if path else None
+        except Exception:  # noqa: BLE001 - a missing final screenshot must not fail the task
+            logger.exception("Final screenshot failed")
+    return outcome
+
+
+def _well_formed(plan: Any) -> bool:
+    return isinstance(plan, list) and all(
+        isinstance(step, dict) and isinstance(step.get("index"), int) and isinstance(step.get("action"), dict)
+        for step in plan
+    )
+
+
+async def handle_task(ws: Any, message: dict[str, Any], executors: dict[str, Executor] | None = None) -> None:
     task_id = message["task_id"]
-    action = message.get("action") or {}
-    action_type = action.get("type")
+    plan = message.get("plan")
     await ws.send(json.dumps({"type": "ack", "task_id": task_id}))
 
-    if action_type not in ALLOWED_ACTIONS:
+    if not _well_formed(plan) or not plan:
         await ws.send(
-            json.dumps(
-                {
-                    "type": "result",
-                    "task_id": task_id,
-                    "status": "failed",
-                    "error": f"Rejected action: {action_type}",
-                }
-            )
+            json.dumps({"type": "result", "task_id": task_id, "status": "failed", "error": "Malformed plan"})
         )
         return
 
-    await ws.send(
-        json.dumps(
-            {
-                "type": "progress",
-                "task_id": task_id,
-                "log": "Starting Notepad task",
-                "steps": [{"name": "Open Notepad", "status": "running"}],
-            }
-        )
-    )
+    if executors is None:
+        from omniagent_pc.executors import build_executors
 
-    typed = str(action.get("message") or "Hello from OmniAgent")
-    result = await asyncio.to_thread(run_phase1_task, typed)
+        executors = build_executors()
+
+    loop = asyncio.get_running_loop()
+    sent: list[Any] = []
+
+    def report(index: int, status: str, detail: str) -> None:
+        payload = {"type": "step", "task_id": task_id, "index": index, "status": status, "detail": detail}
+        sent.append(asyncio.run_coroutine_threadsafe(ws.send(json.dumps(payload)), loop))
+
+    context = RunContext()
+    outcome = await asyncio.to_thread(_run_blocking, plan, executors, context, report)
+    for future in sent:  # keep step updates ahead of the result
+        await asyncio.wrap_future(future)
+
     screenshot_b64 = None
-    if result.screenshot_path:
-        path = Path(result.screenshot_path)
+    if context.screenshot_path:
+        path = Path(context.screenshot_path)
         if path.is_file():
             screenshot_b64 = base64.b64encode(path.read_bytes()).decode()
 
-    steps = [
-        {
-            "name": step.name,
-            "status": "success" if step.status == "Success" else "failed",
-            "detail": step.detail,
-        }
-        for step in result.steps
-    ]
     await ws.send(
         json.dumps(
             {
                 "type": "result",
                 "task_id": task_id,
-                "status": "completed" if result.succeeded else "failed",
-                "summary": result.message,
-                "error": "" if result.succeeded else result.message,
-                "steps": steps,
+                "status": outcome.status,
+                "summary": outcome.summary,
+                "error": outcome.error,
                 "screenshot_b64": screenshot_b64,
             }
         )

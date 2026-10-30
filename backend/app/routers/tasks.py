@@ -6,14 +6,19 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 
-from app.actions import InvalidActionError, parse_instruction
+from app.actions import InvalidActionError, plan_from_instruction
 from app.auth import get_current_user
-from app.dispatch import authorize_dispatch, deny
-from app.models import CreateTaskRequest, Task, TaskPublic, User
+from app.dispatch import authorize_device, authorize_plan, deny
+from app.models import CreateTaskRequest, HeldBack, Step, Task, TaskPublic, User
 from app.store import store
 from app.ws import fail_if_timed_out, send_task
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
+
+
+def _held_step(held: HeldBack) -> Step:
+    name = str(held.raw.get("type") or "Unknown step").replace("_", " ").capitalize()
+    return Step(name=name, status="held_back", detail=held.detail or held.reason)
 
 
 @router.post("", response_model=TaskPublic, status_code=status.HTTP_201_CREATED)
@@ -22,18 +27,22 @@ async def create_task(
     user: User = Depends(get_current_user),
 ) -> TaskPublic:
     try:
-        action = parse_instruction(body.instruction)
+        raw_steps = plan_from_instruction(body.instruction)
     except InvalidActionError as exc:
         deny(status.HTTP_400_BAD_REQUEST, "invalid_instruction", str(exc), user=user)
 
-    agent = authorize_dispatch(user, body.agent_id, action)
+    agent = authorize_device(user, body.agent_id)
+    verdict = authorize_plan(user, agent, raw_steps)
 
     task = Task(
         id=store.new_id(),
         user_id=user.id,
         agent_id=agent.id,
         instruction=body.instruction.strip(),
-        action=action,
+        plan=verdict.steps,
+        held_back=verdict.held_back,
+        confidence=verdict.confidence,
+        steps=[Step(name=s.description) for s in verdict.steps] + [_held_step(h) for h in verdict.held_back],
     )
     task.log("Task accepted")
     store.save_task(task)
@@ -49,8 +58,15 @@ async def create_task(
     task.status = "running"
     task.log("Dispatched to agent")
     store.save_task(task)
-    store.add_audit("dispatch_permitted", "permit", action.type, user_id=user.id, agent_id=agent.id, task_id=task.id)
-    asyncio.create_task(fail_if_timed_out(task.id))
+    store.add_audit(
+        "dispatch_permitted",
+        "permit",
+        f"{len(task.plan)} step(s)",
+        user_id=user.id,
+        agent_id=agent.id,
+        task_id=task.id,
+    )
+    asyncio.create_task(fail_if_timed_out(task.id, len(task.plan)))
     return TaskPublic.from_task(task)
 
 

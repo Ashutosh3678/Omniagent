@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, LargeBinary, String, Text, text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, LargeBinary, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -48,7 +48,9 @@ class TaskRow(Base):
     user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), index=True, nullable=True)
     agent_id: Mapped[str] = mapped_column(ForeignKey("agents.id"), index=True)
     instruction: Mapped[str] = mapped_column(Text)
-    action: Mapped[dict] = mapped_column(Json)
+    plan: Mapped[list] = mapped_column(Json, default=list)
+    held_back: Mapped[list] = mapped_column(Json, default=list)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(16), index=True)
     logs: Mapped[list] = mapped_column(Json, default=list)
     steps: Mapped[list] = mapped_column(Json, default=list)

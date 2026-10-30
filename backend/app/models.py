@@ -7,17 +7,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-TaskStatus = Literal["pending", "running", "completed", "failed"]
-ALLOWED_ACTION_TYPES = frozenset({"open_notepad"})
+TaskStatus = Literal["pending", "running", "completed", "partial", "failed"]
 
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
-
-
-class Action(BaseModel):
-    type: Literal["open_notepad"]
-    message: str = "Hello from OmniAgent"
 
 
 class LogEntry(BaseModel):
@@ -26,9 +20,35 @@ class LogEntry(BaseModel):
 
 
 class Step(BaseModel):
+    """What the app shows for one plan step."""
+
     name: str
-    status: Literal["pending", "running", "success", "failed"] = "pending"
+    status: Literal["pending", "running", "success", "failed", "skipped", "held_back"] = "pending"
     detail: str = ""
+
+
+class PlanStep(BaseModel):
+    """One validated action to run on the PC."""
+
+    index: int
+    action: dict[str, Any]
+    description: str
+    confidence: float = 1.0
+
+
+class HeldBack(BaseModel):
+    """A step the validator refused to dispatch, and why."""
+
+    index: int
+    raw: dict[str, Any] = Field(default_factory=dict)
+    reason: str
+    detail: str = ""
+
+
+class PlanVerdict(BaseModel):
+    steps: list[PlanStep]
+    held_back: list[HeldBack]
+    confidence: float | None = None
 
 
 class User(BaseModel):
@@ -94,7 +114,9 @@ class Task(BaseModel):
     user_id: str | None = None
     agent_id: str
     instruction: str
-    action: Action
+    plan: list[PlanStep] = Field(default_factory=list)
+    held_back: list[HeldBack] = Field(default_factory=list)
+    confidence: float | None = None
     status: TaskStatus = "pending"
     logs: list[LogEntry] = Field(default_factory=list)
     steps: list[Step] = Field(default_factory=list)
@@ -150,6 +172,8 @@ class TaskPublic(BaseModel):
     status: TaskStatus
     logs: list[LogEntry]
     steps: list[Step]
+    held_back: list[HeldBack] = Field(default_factory=list)
+    confidence: float | None = None
     screenshot_url: str | None = None
     summary: str
     error: str
@@ -165,6 +189,8 @@ class TaskPublic(BaseModel):
             status=task.status,
             logs=task.logs,
             steps=task.steps,
+            held_back=task.held_back,
+            confidence=task.confidence,
             screenshot_url=f"/api/v1/tasks/{task.id}/screenshot" if task.screenshot_id else None,
             summary=task.summary,
             error=task.error,

@@ -34,6 +34,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     final source = _items.isEmpty ? kHistory : _items;
     final items = source.where((task) {
       if (_filter == 'Success') return task.status == TaskStatus.completed;
+      if (_filter == 'Partial') return task.status == TaskStatus.partial;
       if (_filter == 'Failed') return task.status == TaskStatus.failed;
       return true;
     }).toList();
@@ -46,7 +47,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
             child: Row(
               children: [
-                for (final label in const ['All', 'Success', 'Failed']) ...[
+                for (final label in const ['All', 'Success', 'Partial', 'Failed']) ...[
                   StatusChip(
                     label: label,
                     selected: _filter == label,

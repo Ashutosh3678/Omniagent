@@ -76,7 +76,9 @@ class TaskTile extends StatelessWidget {
                   ? Theme.of(context).colorScheme.error
                   : task.status == TaskStatus.completed
                       ? kSuccess
-                      : Theme.of(context).colorScheme.primary,
+                      : task.status == TaskStatus.partial
+                          ? Theme.of(context).colorScheme.tertiary
+                          : Theme.of(context).colorScheme.primary,
             ),
       ),
       onTap: onTap,

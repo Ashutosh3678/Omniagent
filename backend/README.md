@@ -38,6 +38,32 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 Accounts use Argon2 password hashes and HS256 JWTs. Set `OMNIAGENT_JWT_SECRET`
 to a long random value outside local dev (a dev default is built in).
 
+## Actions and plans
+
+A task is a plan: an ordered list of typed steps (`app/schema.py`). Each step is one of
+`open_app`, `type_text`, `press_key`, `wait`, `screenshot`, `click`, `scroll`,
+`browser_navigate`; extra or missing parameters are rejected. Only the first five can run
+on the Windows agent today (`EXECUTABLE_ACTIONS`).
+
+`app/validation.py` checks every step: known action, valid parameters, runnable on the
+PC, and inside the PC's permitted apps. The first step that fails is held back with a
+reason (`unknown_action`, `invalid_parameters`, `not_supported`, `unknown_app`,
+`app_not_permitted`, `no_app_open`, `plan_too_long`), and so is everything after it. Only the
+clean prefix is sent; if nothing can run, the task is refused. A plan with held-back steps
+ends as `partial`. Plan confidence is the mean confidence of the accepted steps.
+
+WebSocket messages: the backend sends `task` with `plan`; the agent replies with `ack`,
+`step` (`index`, `status`: running/success/failed/skipped, `detail`) and `result`
+(`completed`/`partial`/`failed`).
+
+## Dispatch rules
+
+A task is sent only if every check passes, and the first failure is refused and
+written to the audit log: PC exists and is yours (404), not removed (403), access
+not expired (403), connected (503), then the plan is validated against the PC's
+permitted apps (403 if the app is not allowed, 422 for other unrunnable plans).
+Unparseable instructions are refused with 400.
+
 ## Tests
 
 ```powershell
@@ -50,8 +76,10 @@ pytest -q
 
 - `GET /health`
 - `POST /api/v1/auth/register`, `POST /api/v1/auth/login`, `POST /api/v1/auth/token` (OAuth2 form), `GET /api/v1/auth/me`
-- `POST /api/v1/agents/register` (user JWT; returns the PC's device token once)
-- `GET /api/v1/agents`
+- `POST /api/v1/agents/pairing-code` (user JWT): one-time code, valid 10 minutes
+- `POST /api/v1/agents/pair` (no login, rate limited): the PC trades the code for its device token, shown once
+- `GET /api/v1/agents`, `PATCH /api/v1/agents/{id}` (name, permitted apps, expiry), `POST /api/v1/agents/{id}/revoke`
+- `GET /api/v1/audit`: your dispatch and device decisions, newest first
 - `POST /api/v1/tasks` — `{ "instruction": "Open Notepad and type Hello from OmniAgent" }`
 - `GET /api/v1/tasks`
 - `GET /api/v1/tasks/{id}`

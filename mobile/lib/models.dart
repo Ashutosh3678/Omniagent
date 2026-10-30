@@ -1,4 +1,4 @@
-enum TaskStatus { pending, running, completed, failed }
+enum TaskStatus { pending, running, completed, partial, failed }
 
 class TaskStep {
   const TaskStep({required this.name, required this.status, this.detail = ''});
@@ -35,6 +35,7 @@ class TaskItem {
         TaskStatus.pending => 'Pending',
         TaskStatus.running => 'Running',
         TaskStatus.completed => 'Success',
+        TaskStatus.partial => 'Partial',
         TaskStatus.failed => 'Failed',
       };
 
