@@ -49,6 +49,10 @@ DATABASE_URL = normalize_database_url(
     or os.environ.get("DATABASE_URL")
     or "postgresql+psycopg://omniagent:omniagent@localhost:5432/omniagent"
 )
+# Schema migrations need a direct connection (Neon's pooled one is a PgBouncer in transaction mode).
+MIGRATION_DATABASE_URL = normalize_database_url(
+    os.environ.get("OMNIAGENT_MIGRATION_DATABASE_URL") or os.environ.get("DATABASE_URL_UNPOOLED") or DATABASE_URL
+)
 check_production(ENVIRONMENT, JWT_SECRET, DATABASE_URL)
 
 # LLM planner on Groq. Without a key only the built-in rules can plan.

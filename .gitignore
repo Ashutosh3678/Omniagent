@@ -33,3 +33,5 @@ dist/
 Omniagent ppts and docs/
 .env
 .env.example
+.neon
+.env.local

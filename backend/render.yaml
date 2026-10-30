@@ -1,11 +1,11 @@
-# Render Blueprint: the OmniAgent backend and its PostgreSQL database.
-# Deploy: Render dashboard > New > Blueprint > pick this repository.
+# Render Blueprint for the OmniAgent backend (database: Neon, set below).
+# Render dashboard > New > Blueprint > pick this repository > set "Blueprint file path" to backend/render.yaml.
 services:
   - type: web
     name: omniagent-backend
     runtime: python
-    plan: free              # free services sleep after 15 minutes idle; use "starter" for always-on
-    rootDir: backend
+    plan: free                # free services sleep after 15 minutes idle; use "starter" to stay awake
+    rootDir: backend          # the code lives in backend/ of the repository
     buildCommand: pip install -r requirements.txt
     # Migrations run first, then the server. --proxy-headers makes rate limits see real client IPs.
     startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
@@ -18,14 +18,6 @@ services:
       - key: OMNIAGENT_JWT_SECRET
         generateValue: true   # a random secret, created once and kept
       - key: OMNIAGENT_DATABASE_URL
-        fromDatabase:
-          name: omniagent-db
-          property: connectionString
+        sync: false           # your Neon connection string; paste it in the dashboard
       - key: OMNIAGENT_GROQ_API_KEY
-        sync: false           # you paste this in the dashboard; it is never stored in git
-
-databases:
-  - name: omniagent-db
-    plan: free              # free Postgres is deleted after 30 days; use "basic-256mb" to keep your data
-    databaseName: omniagent
-    user: omniagent
+        sync: false           # paste in the dashboard; never stored in git

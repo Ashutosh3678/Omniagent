@@ -22,7 +22,9 @@ _sessionmaker: sessionmaker[Session] | None = None
 
 def init_engine(url: str = DATABASE_URL) -> Engine:
     global _engine, _sessionmaker
-    kwargs: dict = {"pool_pre_ping": True}
+    # pool_pre_ping and a short recycle survive Neon suspending an idle database. psycopg's automatic
+    # prepared statements break behind a transaction-mode pooler (Neon's "-pooler" host), so turn them off.
+    kwargs: dict = {"pool_pre_ping": True, "pool_recycle": 300, "connect_args": {"prepare_threshold": None}}
     if url.startswith("sqlite"):
         kwargs = {"connect_args": {"check_same_thread": False}}
         if ":memory:" in url:
