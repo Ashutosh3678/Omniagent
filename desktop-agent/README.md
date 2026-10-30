@@ -45,13 +45,28 @@ Or:
 python -m omniagent_pc
 ```
 
-## Connect to the backend (Phase 3)
+## The OmniAgent window (easiest)
 
-Start the backend first, then:
+Double-click **`start_agent.bat`** (the first run sets up Python packages, about a minute), or run
+`python app.py`. A small window opens:
+
+1. In the phone app go to **Devices > Add PC > Get pairing code**.
+2. Type the code in the window and press **Connect**. The server address is already filled in
+   (`https://omniagent-backend-22fj.onrender.com`).
+3. The status turns green: *Connected. Your phone can send tasks*. Leave the window open.
+
+The PC is remembered, so next time the window connects by itself. **Disconnect** stops it,
+**Forget this PC** clears the saved pairing. The first connection can take up to a minute while the
+free server wakes up. `build_exe.bat` can build a single `OmniAgent.exe` (best effort; web browsing is
+easier from `start_agent.bat`).
+
+## Connect from the command line
+
+The same thing without the window:
 
 ```powershell
 pip install -r requirements.txt
-python connect.py --api http://127.0.0.1:8000 --code ABCD-EFGH --name "Office PC"
+python connect.py --code ABCD-EFGH --name "Office PC"   # add --api http://127.0.0.1:8000 for a local backend
 ```
 
 Get the code in the phone app under **Devices > Add PC**. It works once and

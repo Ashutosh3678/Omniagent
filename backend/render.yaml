@@ -21,11 +21,7 @@ services:
         sync: false           # Neon pooled connection string (DATABASE_URL); paste it in the dashboard
       - key: OMNIAGENT_MIGRATION_DATABASE_URL
         sync: false           # Neon direct connection string (DATABASE_URL_UNPOOLED), used for migrations
-      - key: OMNIAGENT_CLOUDINARY_CLOUD_NAME
-        sync: false           # Cloudinary dashboard > Product Environment Credentials
-      - key: OMNIAGENT_CLOUDINARY_API_KEY
-        sync: false
-      - key: OMNIAGENT_CLOUDINARY_API_SECRET
-        sync: false           # screenshots are stored on Cloudinary's CDN; without these they stay in the database
+      - key: CLOUDINARY_URL
+        sync: false           # cloudinary://<api_key>:<api_secret>@<cloud_name>; screenshots go to the CDN, without it they stay in the database
       - key: OMNIAGENT_GROQ_API_KEY
         sync: false           # paste in the dashboard; never stored in git

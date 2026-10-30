@@ -112,16 +112,14 @@ endpoints stay as they were, for loading the first screen and for catching up af
 
 With Cloudinary configured, the backend uploads each screenshot the PC sends (the final one and the
 per-step thumbnails) and the app loads them straight from the CDN, so images are fast on a phone and
-the database no longer stores them. Set these (environment or `backend/.env`; the values are on the
-Cloudinary dashboard):
+the database no longer stores them. Set one variable (in the environment, `backend/.env`, or the Render
+dashboard; the values are on the Cloudinary dashboard):
 
 ```
-OMNIAGENT_CLOUDINARY_CLOUD_NAME=your-cloud-name
-OMNIAGENT_CLOUDINARY_API_KEY=1234567890123456
-OMNIAGENT_CLOUDINARY_API_SECRET=your-api-secret
+CLOUDINARY_URL=cloudinary://<api_key>:<api_secret>@<cloud_name>
 ```
 
-(or the standard `CLOUDINARY_URL=cloudinary://<api_key>:<api_secret>@<cloud_name>`).
+(or the three separate `OMNIAGENT_CLOUDINARY_CLOUD_NAME`, `..._API_KEY`, `..._API_SECRET`).
 
 - **Private by default.** Images are uploaded as *authenticated* assets under
   `omniagent/<user>/<task>/`. A plain URL does not work; only a URL signed with your API secret does,

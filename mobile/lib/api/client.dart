@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -16,9 +17,32 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
+/// Gives every request time to finish. A free Render service sleeps when idle and needs up to a
+/// minute to wake, so the usual few-second limits would fail the first request of the day.
+class _PatientClient extends http.BaseClient {
+  _PatientClient(this._inner);
+
+  final http.Client _inner;
+  static const patience = Duration(seconds: 90);
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    return _inner.send(request).timeout(
+          patience,
+          onTimeout: () => throw ApiException(
+            0,
+            'The server is taking too long to answer. It may be waking up: try again in a minute.',
+          ),
+        );
+  }
+
+  @override
+  void close() => _inner.close();
+}
+
 class OmniApi {
   OmniApi({http.Client? client, String? baseUrl, Session? session})
-      : _client = client ?? http.Client(),
+      : _client = client ?? _PatientClient(http.Client()),
         _baseUrl = baseUrl ?? kApiBase,
         _session = session ?? appSession;
 

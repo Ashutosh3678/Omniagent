@@ -37,38 +37,15 @@ omniagent/
 └── docs/             Architecture docs (later)
 ```
 
-## Start Phase 3
+## Run it
 
-Terminal 1 — backend:
+The backend is deployed at `https://omniagent-backend-22fj.onrender.com` (see `backend/README.md` to run your
+own). It sleeps when idle, so the first request after a while takes up to a minute.
 
-```powershell
-cd backend
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-```
-
-Terminal 2 — Windows agent:
-
-```powershell
-cd desktop-agent
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python connect.py --api http://127.0.0.1:8000 --email you@example.com
-```
-
-Terminal 3 — mobile app:
-
-```powershell
-cd mobile
-flutter pub get
-flutter run --dart-define=API_BASE=http://127.0.0.1:8000
-```
-
-On an Android emulator use `API_BASE=http://10.0.2.2:8000`.
-
-Create an account on the login screen (use the same email for the agent), then tap **Run Task** with `Open Notepad and type Hello from OmniAgent`.
+1. **Phone app**: `cd mobile`, `flutter pub get`, `flutter run`. Create an account on the login screen.
+2. **PC**: in `desktop-agent`, double-click `start_agent.bat` (or `python app.py`). In the app open
+   **Devices > Add PC > Get pairing code**, type the code into the window, press **Connect**.
+3. In the app, type a task such as `Open Notepad and type Hello from OmniAgent` and tap **Run Task**.
 
 Offline Notepad demo still works: `cd desktop-agent` then `python main.py`.
 

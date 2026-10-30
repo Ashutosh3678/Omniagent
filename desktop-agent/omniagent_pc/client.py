@@ -28,13 +28,30 @@ from omniagent_pc.plan_runner import Executor, PlanOutcome, RunContext, run_plan
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_API = os.environ.get("OMNIAGENT_API", "http://127.0.0.1:8000")
+DEPLOYED_API = "https://omniagent-backend-22fj.onrender.com"
+DEFAULT_API = os.environ.get("OMNIAGENT_API", DEPLOYED_API)
 CREDENTIALS_FILE = Path(os.environ.get("OMNIAGENT_HOME", Path.home() / ".omniagent")) / "agent.json"
 
 # Close codes and HTTP statuses that mean "this PC is not allowed": reconnecting will not help.
 FATAL_CLOSE_CODES = frozenset({4401, 4403, 4404})
 FATAL_HTTP_STATUSES = frozenset({401, 403, 404})
 MAX_BACKOFF_SECONDS = 30.0
+# A free Render service sleeps when idle and needs up to a minute to wake: be patient with the first contact.
+REQUEST_TIMEOUT_SECONDS = 90
+CONNECT_TIMEOUT_SECONDS = 60
+
+# on_event(kind, text) lets a window show what the agent is doing. Kinds: connecting, connected,
+# disconnected, step, task_started, task_finished. It is called from several threads and must not block.
+EventCallback = Callable[[str, str], None]
+
+
+def _notify(on_event: EventCallback | None, kind: str, text: str = "") -> None:
+    if on_event is None:
+        return
+    try:
+        on_event(kind, text)
+    except Exception:  # noqa: BLE001 - a broken window must never stop the agent
+        logger.exception("Event callback failed")
 
 
 class RejectedByBackend(Exception):
@@ -52,7 +69,7 @@ def _request(method: str, url: str, token: str, payload: dict[str, Any] | None =
             "Content-Type": "application/json",
         },
     )
-    with urllib.request.urlopen(request, timeout=15) as response:
+    with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
         return json.loads(response.read().decode())
 
 
@@ -160,6 +177,7 @@ async def handle_task(
     executors: dict[str, Executor] | None = None,
     stop: threading.Event | None = None,
     capture: Callable[[], bytes | None] | None = None,
+    on_event: EventCallback | None = None,
 ) -> None:
     task_id = message["task_id"]
     plan = message.get("plan")
@@ -181,7 +199,10 @@ async def handle_task(
             payload["screenshot_b64"] = base64.b64encode(shot).decode()
             payload["content_type"] = "image/jpeg"
         sent.append(asyncio.run_coroutine_threadsafe(_send(ws, payload), loop))
+        if status != "running":
+            _notify(on_event, "step", f"Step {index + 1}: {status}" + (f" ({detail[:90]})" if detail else ""))
 
+    _notify(on_event, "task_started", f"Running {len(plan)} step(s)")
     context = RunContext(capture_jpeg=capture if capture is not None else _default_capture())
     outcome = await asyncio.to_thread(_run_blocking, plan, executors, context, report, stop)
     for future in sent:  # keep step updates ahead of the result
@@ -193,6 +214,7 @@ async def handle_task(
         if path.is_file():
             screenshot_b64 = base64.b64encode(path.read_bytes()).decode()
 
+    _notify(on_event, "task_finished", f"{outcome.status}: {outcome.summary}" + (f" ({outcome.error})" if outcome.error else ""))
     await _send(
         ws,
         {
@@ -210,6 +232,7 @@ async def serve(
     ws: Any,
     executors: dict[str, Executor] | None = None,
     capture: Callable[[], bytes | None] | None = None,
+    on_event: EventCallback | None = None,
 ) -> None:
     """Handles one connection until it closes: reports what this PC can do, runs tasks, hears cancels."""
     executors = executors if executors is not None else _default_executors()
@@ -220,7 +243,7 @@ async def serve(
 
     async def run_one(message: dict[str, Any], stop: threading.Event) -> None:
         try:
-            await handle_task(ws, message, executors, stop, capture)
+            await handle_task(ws, message, executors, stop, capture, on_event)
         except Exception:  # noqa: BLE001 - one bad task must not take the connection down
             logger.exception("Task %s crashed", message.get("task_id"))
         finally:
@@ -276,6 +299,7 @@ async def run_client(
     executors: dict[str, Executor] | None = None,
     capture: Callable[[], bytes | None] | None = None,
     jitter: Callable[[], float] = random.random,
+    on_event: EventCallback | None = None,
 ) -> None:
     """Stays connected. Returns only by raising RejectedByBackend (or on Ctrl+C)."""
     creds = await asyncio.to_thread(ensure_credentials, api, name, hostname, code)
@@ -288,11 +312,17 @@ async def run_client(
     while True:
         ws = None
         close_code: int | None = None
+        _notify(on_event, "connecting", "Connecting to the server")
         try:
-            async with connect(url, additional_headers={"Authorization": f"Bearer {token}"}) as ws:
+            async with connect(
+                url,
+                additional_headers={"Authorization": f"Bearer {token}"},
+                open_timeout=CONNECT_TIMEOUT_SECONDS,
+            ) as ws:
                 logger.info("Connected to %s", url)
                 backoff = 1.0
-                await serve(ws, executors, capture)
+                _notify(on_event, "connected", "Connected. Waiting for tasks")
+                await serve(ws, executors, capture, on_event)
             close_code = _close_code(None, ws)
         except websockets.exceptions.InvalidStatus as exc:
             if exc.response.status_code in FATAL_HTTP_STATUSES:
@@ -308,6 +338,7 @@ async def run_client(
 
         wait = backoff + jitter()
         logger.info("Disconnected. Reconnecting in %.0fs", wait)
+        _notify(on_event, "disconnected", f"Disconnected. Reconnecting in {wait:.0f}s")
         await sleep(wait)
         backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
 

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
@@ -13,12 +15,15 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
   final _email = TextEditingController();
   final _password = TextEditingController();
   bool _busy = false;
+  bool _slow = false;
+  Timer? _slowTimer;
   String? _error;
 
   static final _emailPattern = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
 
   @override
   void dispose() {
+    _slowTimer?.cancel();
     _email.dispose();
     _password.dispose();
     super.dispose();
@@ -39,7 +44,12 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
     }
     setState(() {
       _busy = true;
+      _slow = false;
       _error = null;
+    });
+    // The free server sleeps when idle; tell the user why the first login is slow.
+    _slowTimer = Timer(const Duration(seconds: 6), () {
+      if (mounted && _busy) setState(() => _slow = true);
     });
     try {
       if (signUp) {
@@ -56,7 +66,13 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
         setState(() => _error = 'Could not reach the server. Check your connection.');
       }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      _slowTimer?.cancel();
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _slow = false;
+        });
+      }
     }
   }
 
@@ -98,6 +114,13 @@ class _WelcomeScreenState extends State<WelcomeScreen> {
                 decoration: const InputDecoration(labelText: 'Password'),
                 onSubmitted: (_) => _submit(signUp: false),
               ),
+              if (_slow) ...[
+                const SizedBox(height: 16),
+                Text(
+                  'Waking up the server. The first time can take up to a minute.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
               if (_error != null) ...[
                 const SizedBox(height: 16),
                 Text(_error!, style: TextStyle(color: scheme.error)),

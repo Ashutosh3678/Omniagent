@@ -31,10 +31,16 @@ meanwhile the screens fall back to slow polling. An expired login signs you out.
 ```powershell
 cd mobile
 flutter pub get
-flutter run --dart-define=API_BASE=http://10.0.2.2:8000 --dart-define=APP_TOKEN=dev-app-token
+flutter run
 ```
 
-`10.0.2.2` is the host machine as seen from the Android emulator.
+The app talks to the deployed backend (`https://omniagent-backend-22fj.onrender.com`) by default.
+That server sleeps when idle, so the first request after a while can take up to a minute; the login
+screen says so. To use a backend on your own machine instead, pass its address:
+
+```powershell
+flutter run --dart-define=API_BASE=http://10.0.2.2:8000   # Android emulator -> your PC
+```
 
 Web:
 
