@@ -26,7 +26,7 @@ async def preview_plan(body: PlanPreviewRequest, user: User = Depends(get_curren
         result = await llm_plan(user, agent, body.instruction)
     record_planned(user, agent, result, "plan_previewed")
 
-    verdict = validate_plan(result.steps, agent.permitted_apps)
+    verdict = validate_plan(result.steps, agent.permitted_apps, agent.executable_actions)
     return PlanPreview(
         planner=result.planner,
         steps=verdict.steps,

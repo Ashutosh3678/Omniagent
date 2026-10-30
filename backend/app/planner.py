@@ -47,21 +47,35 @@ class PlannerResult:
     meta: dict[str, Any] = field(default_factory=dict)
 
 
-def _system_prompt(permitted_apps: list[str]) -> str:
-    actions = sorted(EXECUTABLE_ACTIONS)
+_ACTION_DOCS: dict[str, str] = {
+    "open_app": '- open_app: {"type":"open_app","app":"notepad","confidence":0.95}. Must come before typing, key presses, clicks or scrolling in that app.',
+    "type_text": '- type_text: {"type":"type_text","text":"...","confidence":0.9}. Text is appended to the open app (1-2000 characters).',
+    "press_key": (
+        '- press_key: {"type":"press_key","key":"enter","modifiers":[],"confidence":0.9}. key is one of: {keys}; '
+        'or one of a, c, v, x, z, y together with modifiers ["ctrl"].'
+    ),
+    "wait": '- wait: {"type":"wait","seconds":1,"confidence":0.9}. seconds between 0.1 and 10.',
+    "screenshot": '- screenshot: {"type":"screenshot","confidence":0.9}.',
+    "click": '- click: {"type":"click","target":"visible label of the button, menu or link","confidence":0.8}.',
+    "scroll": '- scroll: {"type":"scroll","direction":"down","amount":3,"confidence":0.9}. direction up or down, amount 1-20.',
+    "browser_navigate": (
+        '- browser_navigate: {"type":"browser_navigate","url":"https://example.com","confidence":0.9}. '
+        "Opens the browser if needed. Public http(s) addresses only; use it only when the browser app is allowed."
+    ),
+}
+
+
+def _system_prompt(permitted_apps: list[str], actions: list[str] | None = None) -> str:
+    offered = [a for a in _ACTION_DOCS if a in (set(actions) if actions is not None else EXECUTABLE_ACTIONS)]
     keys = ", ".join(sorted(SPECIAL_KEYS))
+    docs = "\n".join(_ACTION_DOCS[a].replace("{keys}", keys) for a in offered)
     apps = ", ".join(sorted(set(permitted_apps) & KNOWN_APPS)) or "none"
     return (
         "You turn a user's request into a short, ordered plan of steps for a Windows PC agent.\n"
         'Reply with one JSON object only: {"steps": [...], "unsupported_reason": "..."}.\n'
-        "Each step is an object with a \"type\", a \"confidence\" (number 0 to 1) and the parameters for that type.\n\n"
-        f"Allowed types: {', '.join(actions)}.\n"
-        '- open_app: {"type":"open_app","app":"notepad","confidence":0.95}. Must come before any typing or key presses.\n'
-        '- type_text: {"type":"type_text","text":"...","confidence":0.9}. Text is appended to the open app (1-2000 characters).\n'
-        f'- press_key: {{"type":"press_key","key":"enter","modifiers":[],"confidence":0.9}}. key is one of: {keys}; '
-        'or one of a, c, v, x, z, y together with modifiers ["ctrl"].\n'
-        '- wait: {"type":"wait","seconds":1,"confidence":0.9}. seconds between 0.1 and 10.\n'
-        '- screenshot: {"type":"screenshot","confidence":0.9}.\n'
+        'Each step is an object with a "type", a "confidence" (number 0 to 1) and the parameters for that type.\n\n'
+        f"Allowed types: {', '.join(offered)}.\n"
+        f"{docs}\n"
         f"Apps this PC may use: {apps}.\n\n"
         "Rules:\n"
         "- Use the fewest steps that do what was asked, at most 20.\n"
@@ -107,7 +121,7 @@ class GroqPlanner:
         self._timeout = timeout
         self._transport = transport
 
-    def request_body(self, instruction: str, permitted_apps: list[str]) -> dict[str, Any]:
+    def request_body(self, instruction: str, permitted_apps: list[str], actions: list[str] | None = None) -> dict[str, Any]:
         body: dict[str, Any] = {
             "model": self._model,
             "temperature": 0,
@@ -115,7 +129,7 @@ class GroqPlanner:
             "max_tokens": 4096,
             "response_format": {"type": "json_object"},
             "messages": [
-                {"role": "system", "content": _system_prompt(permitted_apps)},
+                {"role": "system", "content": _system_prompt(permitted_apps, actions)},
                 {"role": "user", "content": instruction},
             ],
         }
@@ -123,8 +137,8 @@ class GroqPlanner:
             body["reasoning_effort"] = "low"
         return body
 
-    async def plan(self, instruction: str, permitted_apps: list[str]) -> PlannerResult:
-        payload = await self._post(self.request_body(instruction, permitted_apps))
+    async def plan(self, instruction: str, permitted_apps: list[str], actions: list[str] | None = None) -> PlannerResult:
+        payload = await self._post(self.request_body(instruction, permitted_apps, actions))
         try:
             choice = payload["choices"][0]
             text = choice["message"]["content"]

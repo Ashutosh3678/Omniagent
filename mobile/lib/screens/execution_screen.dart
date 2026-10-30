@@ -114,11 +114,12 @@ class _ExecutionScreenState extends State<ExecutionScreen> {
             for (var i = 0; i < steps.length; i++)
               _StepRow(
                 label: steps[i].name,
-                detail: steps[i].status == 'failed' || steps[i].status == 'held_back' ? steps[i].detail : '',
+                detail: steps[i].hasProblem ? steps[i].detail : '',
                 state: switch (steps[i].status) {
                   'success' => _StepState.done,
                   'failed' => _StepState.failed,
                   'held_back' => _StepState.held,
+                  'unverified' => _StepState.unverified,
                   'skipped' => _StepState.skipped,
                   _ => (i == activeIndex || steps[i].status == 'running') ? _StepState.active : _StepState.todo,
                 },
@@ -135,7 +136,7 @@ class _ExecutionScreenState extends State<ExecutionScreen> {
   }
 }
 
-enum _StepState { done, active, todo, failed, held, skipped }
+enum _StepState { done, active, todo, failed, held, skipped, unverified }
 
 class _StepRow extends StatelessWidget {
   const _StepRow({required this.label, required this.state, this.detail = ''});
@@ -152,6 +153,7 @@ class _StepRow extends StatelessWidget {
       _StepState.failed => Theme.of(context).colorScheme.error,
       _StepState.todo => Theme.of(context).colorScheme.outlineVariant,
       _StepState.held => Theme.of(context).colorScheme.tertiary,
+      _StepState.unverified => Theme.of(context).colorScheme.tertiary,
       _StepState.skipped => Theme.of(context).colorScheme.outlineVariant,
     };
 

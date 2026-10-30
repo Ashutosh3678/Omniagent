@@ -48,7 +48,7 @@ class _ResultScreenState extends State<ResultScreen> {
                   : (task.error.isEmpty ? (task.status == TaskStatus.partial ? 'Task partly done' : 'Task failed') : task.error),
               style: Theme.of(context).textTheme.titleMedium,
             ),
-            for (final step in task.steps.where((s) => s.status == 'failed' || s.status == 'held_back'))
+            for (final step in task.steps.where((s) => s.hasProblem))
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(

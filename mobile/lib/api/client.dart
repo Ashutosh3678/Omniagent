@@ -65,6 +65,9 @@ class OmniApi {
         permittedApps: [
           for (final app in (map['permitted_apps'] as List<dynamic>? ?? const [])) app as String,
         ],
+        actions: [
+          for (final action in (map['actions'] as List<dynamic>? ?? const [])) action as String,
+        ],
         expiresAt: map['expires_at'] == null ? null : DateTime.parse(map['expires_at'] as String).toLocal(),
       );
     }).toList();
@@ -76,6 +79,10 @@ class OmniApi {
       code: body['code'] as String,
       expiresAt: DateTime.parse(body['expires_at'] as String).toLocal(),
     );
+  }
+
+  Future<void> setPermittedApps(String id, List<String> apps) async {
+    await _send('PATCH', '/api/v1/agents/$id', {'permitted_apps': apps});
   }
 
   Future<void> revokeAgent(String id) async {
@@ -117,6 +124,20 @@ class OmniApi {
     await _send('POST', '/api/v1/tasks/$id/cancel', const {});
   }
 
+  /// The thumbnail the PC sent after a step, or null if there is none yet.
+  Future<Uint8List?> getStepScreenshot(String taskId, int index) async {
+    final response = await _client.get(
+      Uri.parse('$_baseUrl/api/v1/tasks/$taskId/steps/$index/screenshot'),
+      headers: _headers,
+    );
+    if (response.statusCode == 401) _session.signOut();
+    if (response.statusCode == 404) return null;
+    if (response.statusCode >= 400) {
+      throw ApiException(response.statusCode, response.body);
+    }
+    return response.bodyBytes;
+  }
+
   Future<Uint8List?> getScreenshot(String taskId) async {
     final response = await _client.get(
       Uri.parse('$_baseUrl/api/v1/tasks/$taskId/screenshot'),
@@ -137,9 +158,11 @@ class OmniApi {
 
   Future<dynamic> _send(String method, String path, Map<String, dynamic> payload) async {
     final uri = Uri.parse('$_baseUrl$path');
-    final response = method == 'POST'
-        ? await _client.post(uri, headers: _headers, body: jsonEncode(payload))
-        : await _client.get(uri, headers: _headers);
+    final response = switch (method) {
+      'POST' => await _client.post(uri, headers: _headers, body: jsonEncode(payload)),
+      'PATCH' => await _client.patch(uri, headers: _headers, body: jsonEncode(payload)),
+      _ => await _client.get(uri, headers: _headers),
+    };
     return _decode(response);
   }
 

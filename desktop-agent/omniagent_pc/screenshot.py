@@ -75,3 +75,21 @@ def _is_png(path: Path) -> bool:
             return handle.read(8) == PNG_SIGNATURE
     except OSError:
         return False
+
+
+def capture_jpeg(max_width: int = 960, quality: int = 70) -> bytes | None:
+    """A small JPEG of the primary monitor, for the live view. Never touches disk."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    with mss.mss() as sct:
+        if len(sct.monitors) < 2:
+            return None
+        shot = sct.grab(sct.monitors[1])
+        image = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+    if image.width > max_width:
+        image = image.resize((max_width, max(1, round(image.height * max_width / image.width))))
+    buffer = BytesIO()
+    image.save(buffer, "JPEG", quality=quality)
+    return buffer.getvalue()

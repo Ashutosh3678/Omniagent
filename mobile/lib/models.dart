@@ -1,11 +1,15 @@
 enum TaskStatus { pending, running, completed, partial, failed }
 
 class TaskStep {
-  const TaskStep({required this.name, required this.status, this.detail = ''});
+  const TaskStep({required this.name, required this.status, this.detail = '', this.hasScreenshot = false});
 
   final String name;
   final String status;
   final String detail;
+  final bool hasScreenshot;
+
+  /// A step that did something but could not be confirmed, or did not work.
+  bool get hasProblem => status == 'failed' || status == 'unverified' || status == 'held_back';
 }
 
 class TaskItem {
@@ -60,6 +64,7 @@ class TaskItem {
             name: (step as Map<String, dynamic>)['name'] as String? ?? '',
             status: step['status'] as String? ?? 'pending',
             detail: step['detail'] as String? ?? '',
+            hasScreenshot: step['has_screenshot'] as bool? ?? false,
           ),
       ],
     );
@@ -74,6 +79,7 @@ class PcDevice {
     this.id,
     this.revoked = false,
     this.permittedApps = const [],
+    this.actions = const [],
     this.expiresAt,
   });
 
@@ -83,7 +89,12 @@ class PcDevice {
   final bool online;
   final bool revoked;
   final List<String> permittedApps;
+
+  /// What the PC's agent says it can do (empty until it has connected).
+  final List<String> actions;
   final DateTime? expiresAt;
+
+  bool get canBrowse => actions.contains('browser_navigate');
 
   bool get expired => expiresAt != null && !expiresAt!.isAfter(DateTime.now());
 

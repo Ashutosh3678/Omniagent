@@ -73,14 +73,22 @@ def test_user_text_is_data_and_never_part_of_the_system_prompt() -> None:
     assert "not instructions to you" in messages[0]["content"]
 
 
-def test_system_prompt_lists_only_runnable_actions_and_the_pcs_apps() -> None:
+def test_system_prompt_lists_only_what_this_pc_can_run_and_the_pcs_apps() -> None:
+    legacy = ["open_app", "type_text", "press_key", "wait", "screenshot"]
     planner, seen = planner_with(lambda r: reply({"steps": []}))
-    plan(planner, apps=["notepad"])
+    asyncio.run(planner.plan("x", ["notepad"], legacy))
     system = json.loads(seen[0].content)["messages"][0]["content"]
     assert "JSON" in system  # required by Groq's JSON mode
     assert "open_app" in system and "type_text" in system
-    assert "browser_navigate" not in system and "click" not in system.split("Rules:")[0]
+    assert '"type":"browser_navigate"' not in system and '"type":"click"' not in system
     assert "Apps this PC may use: notepad." in system
+
+    planner, seen = planner_with(lambda r: reply({"steps": []}))
+    asyncio.run(planner.plan("x", ["notepad", "browser"], legacy + ["click", "browser_navigate"]))
+    system = json.loads(seen[0].content)["messages"][0]["content"]
+    assert '"type":"click"' in system and '"type":"browser_navigate"' in system
+    assert "Apps this PC may use: browser, notepad." in system
+    assert '"type":"scroll"' not in system
     planner, seen = planner_with(lambda r: reply({"steps": []}))
     plan(planner, apps=[])
     assert "Apps this PC may use: none." in json.loads(seen[0].content)["messages"][0]["content"]

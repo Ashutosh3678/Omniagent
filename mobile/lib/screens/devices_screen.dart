@@ -79,6 +79,21 @@ class _DevicesScreenState extends State<DevicesScreen> {
     }
   }
 
+  Future<void> _setBrowser(PcDevice device, bool allowed) async {
+    if (device.id == null) return;
+    final apps = {...device.permittedApps}
+      ..remove('browser')
+      ..addAll(allowed ? ['browser'] : const <String>[]);
+    try {
+      await omniApi.setPermittedApps(device.id!, apps.toList()..sort());
+      await _load();
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } catch (_) {
+      if (mounted) setState(() => _error = 'Could not reach the server.');
+    }
+  }
+
   Future<void> _remove(PcDevice device) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -148,7 +163,18 @@ class _DevicesScreenState extends State<DevicesScreen> {
                     ],
                   ),
                   if (!device.revoked) ...[
-                    const SizedBox(height: 12),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Allow web browsing'),
+                      subtitle: Text(
+                        device.canBrowse || device.actions.isEmpty
+                            ? 'Lets tasks open public web pages on this PC'
+                            : 'Install Playwright on this PC to use this',
+                      ),
+                      value: device.permittedApps.contains('browser'),
+                      onChanged: (value) => _setBrowser(device, value),
+                    ),
+                    const SizedBox(height: 4),
                     OutlinedButton(
                       onPressed: () => _remove(device),
                       style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(44)),

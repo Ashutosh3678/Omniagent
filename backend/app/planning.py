@@ -47,7 +47,7 @@ async def llm_plan(user: User, agent: Agent, instruction: str) -> PlannerResult:
     if not planner_limiter.allow(user.id):
         deny(status.HTTP_429_TOO_MANY_REQUESTS, "planner_rate_limited", "Too many requests. Wait a moment.", user=user, agent=agent)
     try:
-        result = await llm.plan(instruction, agent.permitted_apps)
+        result = await llm.plan(instruction, agent.permitted_apps, sorted(agent.executable_actions))
     except PlannerError:
         deny(
             status.HTTP_503_SERVICE_UNAVAILABLE,

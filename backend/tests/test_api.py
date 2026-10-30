@@ -619,10 +619,11 @@ class FakePlanner:
         self.error = error
         self.calls: list[tuple[str, list[str]]] = []
 
-    async def plan(self, instruction: str, permitted_apps: list[str]):
+    async def plan(self, instruction: str, permitted_apps: list[str], actions: list[str] | None = None):
         from app.planner import PlannerResult
 
         self.calls.append((instruction, list(permitted_apps)))
+        self.actions = actions
         if self.error:
             raise self.error
         return PlannerResult(steps=self.steps, planner="groq", note=self.note)
@@ -874,3 +875,193 @@ def test_client_supplied_plans_are_validated_like_any_other() -> None:
             too_many = [{"action": {"type": "wait", "seconds": 1}}] * 51
             assert client.post("/api/v1/tasks", headers=user, json={"instruction": "x", "plan": too_many}).status_code == 422
             assert client.get("/api/v1/tasks", headers=user).json() == []
+
+
+# stage 6: capabilities, cancel, step screenshots, browser scope
+def _jpeg_b64(size: int = 64) -> str:
+    return base64.b64encode(b"\xff\xd8\xff" + b"x" * size + b"\xff\xd9").decode()
+
+
+def test_agent_capabilities_decide_what_can_be_planned() -> None:
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        click_plan = [
+            {"action": {"type": "open_app", "app": "notepad"}},
+            {"action": {"type": "click", "target": "File"}},
+        ]
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            # An agent that has not reported capabilities is treated as an older one: no clicking.
+            older = client.post("/api/v1/tasks", headers=user, json={"instruction": "x", "plan": click_plan}).json()
+            assert [h["reason"] for h in older["held_back"]] == ["not_supported"]
+            ws.receive_json()
+
+            ws.send_json({"type": "capabilities", "actions": ["open_app", "click", "format_disk"]})
+            agents = client.get("/api/v1/agents", headers=user).json()
+            assert agents[0]["actions"] == ["click", "open_app"]  # unknown actions are dropped
+
+            newer = client.post("/api/v1/tasks", headers=user, json={"instruction": "x", "plan": click_plan}).json()
+            assert newer["held_back"] == []
+            assert [s["action"]["type"] for s in ws.receive_json()["plan"]] == ["open_app", "click"]
+
+
+def test_capabilities_survive_reconnects_and_are_per_pc() -> None:
+    with TestClient(app) as client:
+        user = _signup(client)
+        first_id, first_device = _register(client, user)
+        second_id, _ = _register(client, user)
+        with _ws(client, first_id, first_device) as ws:
+            ws.receive_json()
+            ws.send_json({"type": "capabilities", "actions": ["open_app", "scroll"]})
+            client.get("/api/v1/agents", headers=user)
+        by_id = {a["id"]: a["actions"] for a in client.get("/api/v1/agents", headers=user).json()}
+        assert by_id[first_id] == ["open_app", "scroll"]
+        assert "scroll" not in by_id[second_id]
+
+
+def test_cancel_tells_the_agent_to_stop() -> None:
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            task = client.post("/api/v1/tasks", headers=user, json={"instruction": "open notepad and type hi"}).json()
+            inbound = ws.receive_json()
+            ws.send_json({"type": "step", "task_id": inbound["task_id"], "index": 0, "status": "running"})
+
+            cancelled = client.post(f"/api/v1/tasks/{task['id']}/cancel", headers=user).json()
+            assert cancelled["status"] == "failed" and cancelled["error"] == "Cancelled"
+            assert [s["status"] for s in cancelled["steps"]] == ["skipped", "skipped"]
+            assert ws.receive_json() == {"type": "cancel", "task_id": task["id"]}
+            events = [e["event"] for e in client.get("/api/v1/audit", headers=user).json()]
+            assert "task_cancelled" in events
+
+
+def test_cancelling_a_finished_task_changes_nothing_and_sends_nothing() -> None:
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            task = client.post("/api/v1/tasks", headers=user, json={"instruction": "open notepad"}).json()
+            inbound = ws.receive_json()
+            ws.send_json({"type": "step", "task_id": inbound["task_id"], "index": 0, "status": "success"})
+            ws.send_json({"type": "result", "task_id": inbound["task_id"], "status": "partial", "error": "stopped"})
+            again = client.post(f"/api/v1/tasks/{task['id']}/cancel", headers=user).json()
+            assert again["status"] == "partial"
+            ws.send_json({"type": "pong"})  # nothing queued for the agent
+            assert [e["event"] for e in client.get("/api/v1/audit", headers=user).json()].count("task_cancelled") == 0
+
+
+def test_cancel_while_the_pc_is_offline_still_cancels() -> None:
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            task = client.post("/api/v1/tasks", headers=user, json={"instruction": "open notepad"}).json()
+            ws.receive_json()
+            store.sockets.pop(agent_id)  # the PC drops without the backend noticing yet
+            cancelled = client.post(f"/api/v1/tasks/{task['id']}/cancel", headers=user).json()
+            assert cancelled["status"] == "failed"
+            assert any("not connected" in log["message"] for log in cancelled["logs"])
+
+
+def test_step_screenshots_are_stored_and_private() -> None:
+    with TestClient(app) as client:
+        alice = _signup(client, "alice@example.com")
+        bob = _signup(client, "bob@example.com")
+        agent_id, device = _register(client, alice)
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            task = client.post("/api/v1/tasks", headers=alice, json={"instruction": "open notepad and type hi"}).json()
+            inbound = ws.receive_json()
+            ws.send_json(
+                {"type": "step", "task_id": inbound["task_id"], "index": 0, "status": "success", "screenshot_b64": _jpeg_b64()}
+            )
+            ws.send_json({"type": "step", "task_id": inbound["task_id"], "index": 1, "status": "running"})
+
+            fetched = client.get(f"/api/v1/tasks/{task['id']}", headers=alice).json()
+            assert [s["has_screenshot"] for s in fetched["steps"]] == [True, False]
+
+            shot = client.get(f"/api/v1/tasks/{task['id']}/steps/0/screenshot", headers=alice)
+            assert shot.status_code == 200 and shot.headers["content-type"] == "image/jpeg"
+            assert shot.content.startswith(b"\xff\xd8\xff")
+            assert client.get(f"/api/v1/tasks/{task['id']}/steps/1/screenshot", headers=alice).status_code == 404
+            assert client.get(f"/api/v1/tasks/{task['id']}/steps/0/screenshot", headers=bob).status_code == 404
+            assert client.get(f"/api/v1/tasks/{task['id']}/steps/0/screenshot").status_code == 401
+
+
+def test_bad_step_screenshots_are_ignored_but_the_step_update_is_kept() -> None:
+    from app.ws import MAX_STEP_SCREENSHOT_BYTES
+
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            task = client.post("/api/v1/tasks", headers=user, json={"instruction": "open notepad"}).json()
+            inbound = ws.receive_json()
+            tid = inbound["task_id"]
+            too_big = base64.b64encode(b"x" * (MAX_STEP_SCREENSHOT_BYTES + 1)).decode()
+            for bad in (
+                {"screenshot_b64": "%%%not base64%%%"},
+                {"screenshot_b64": too_big},
+                {"screenshot_b64": _jpeg_b64(), "content_type": "text/html"},
+                {"screenshot_b64": 12345},
+            ):
+                ws.send_json({"type": "step", "task_id": tid, "index": 0, "status": "running", **bad})
+            fetched = client.get(f"/api/v1/tasks/{task['id']}", headers=user).json()
+            assert fetched["steps"][0]["has_screenshot"] is False
+            assert fetched["steps"][0]["status"] == "running"
+
+
+def test_unverified_steps_are_recorded_and_the_task_is_partial() -> None:
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            task = client.post("/api/v1/tasks", headers=user, json={"instruction": "open notepad and type hi"}).json()
+            tid = ws.receive_json()["task_id"]
+            ws.send_json({"type": "step", "task_id": tid, "index": 0, "status": "success"})
+            ws.send_json(
+                {"type": "step", "task_id": tid, "index": 1, "status": "unverified", "detail": "could not confirm it on screen"}
+            )
+            ws.send_json({"type": "result", "task_id": tid, "status": "partial", "error": "could not confirm it on screen"})
+            fetched = client.get(f"/api/v1/tasks/{task['id']}", headers=user).json()
+            assert fetched["status"] == "partial"
+            assert [s["status"] for s in fetched["steps"]] == ["success", "unverified"]
+
+
+def test_the_browser_is_off_until_the_user_allows_it() -> None:
+    nav = [{"action": {"type": "browser_navigate", "url": "https://example.com"}}]
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            ws.send_json({"type": "capabilities", "actions": ["browser_navigate", "open_app"]})
+            denied = client.post("/api/v1/tasks", headers=user, json={"instruction": "x", "plan": nav})
+            assert denied.status_code == 403
+            assert client.get("/api/v1/audit", headers=user).json()[0]["reason"] == "app_not_permitted"
+
+            patched = client.patch(f"/api/v1/agents/{agent_id}", headers=user, json={"permitted_apps": ["notepad", "browser"]})
+            assert patched.status_code == 200 and patched.json()["permitted_apps"] == ["browser", "notepad"]
+            allowed = client.post("/api/v1/tasks", headers=user, json={"instruction": "x", "plan": nav})
+            assert allowed.status_code == 201
+            assert ws.receive_json()["plan"][0]["action"]["url"] == "https://example.com"
+
+
+def test_the_planner_is_told_what_this_pc_can_do(monkeypatch) -> None:
+    fake = FakePlanner([{"action": {"type": "open_app", "app": "notepad"}, "confidence": 1}])
+    monkeypatch.setattr("app.planner.get_planner", lambda: fake)
+    with TestClient(app) as client:
+        user = _signup(client)
+        agent_id, device = _register(client, user)
+        with _ws(client, agent_id, device) as ws:
+            ws.receive_json()
+            ws.send_json({"type": "capabilities", "actions": ["open_app", "type_text", "scroll"]})
+            client.post("/api/v1/plans/preview", headers=user, json={"instruction": "scroll the page"})
+            assert fake.actions == ["open_app", "scroll", "type_text"]

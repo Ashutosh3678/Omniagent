@@ -82,7 +82,7 @@ def authorize_plan(user: User, agent: Agent, raw_steps: list[Any]) -> PlanVerdic
 
     Held-back steps are audited. If nothing at all can run, the request is refused.
     """
-    verdict = validate_plan(raw_steps, agent.permitted_apps)
+    verdict = validate_plan(raw_steps, agent.permitted_apps, agent.executable_actions)
     for held in verdict.held_back:
         store.add_audit(
             "plan_step_held_back",

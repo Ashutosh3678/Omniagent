@@ -34,6 +34,7 @@ class AgentRow(Base):
     permitted_apps: Mapped[list] = mapped_column(Json, default=list, server_default=text("'[\"notepad\"]'"))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    capabilities: Mapped[list | None] = mapped_column(Json, nullable=True)
     name: Mapped[str] = mapped_column(String(120))
     hostname: Mapped[str] = mapped_column(String(255))
     online: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -90,3 +91,12 @@ class AuditRow(Base):
     decision: Mapped[str] = mapped_column(String(8))
     reason: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class StepScreenshotRow(Base):
+    __tablename__ = "step_screenshots"
+
+    task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), primary_key=True)
+    step_index: Mapped[int] = mapped_column(primary_key=True)
+    content_type: Mapped[str] = mapped_column(String(32))
+    data: Mapped[bytes] = mapped_column(LargeBinary)

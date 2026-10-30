@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db import Base, get_engine, session_scope
 from app.models import Agent, AuditEvent, Task, User, utcnow
-from app.orm import AgentRow, AuditRow, PairingCodeRow, ScreenshotRow, TaskRow, UserRow
+from app.orm import AgentRow, AuditRow, PairingCodeRow, ScreenshotRow, StepScreenshotRow, TaskRow, UserRow
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -42,6 +42,7 @@ def _agent(row: AgentRow) -> Agent:
         permitted_apps=list(row.permitted_apps or []),
         expires_at=_aware(row.expires_at),
         revoked_at=_aware(row.revoked_at),
+        capabilities=list(row.capabilities) if row.capabilities is not None else None,
     )
 
 
@@ -223,6 +224,12 @@ class Store:
             row.expires_at = agent.expires_at
             row.revoked_at = agent.revoked_at
 
+    def set_capabilities(self, agent_id: str, actions: list[str]) -> None:
+        with session_scope() as db:
+            row = db.get(AgentRow, agent_id)
+            if row is not None:
+                row.capabilities = sorted(set(actions))
+
     def get_agent_token_hash(self, agent_id: str) -> str | None:
         with session_scope() as db:
             row = db.get(AgentRow, agent_id)
@@ -305,6 +312,23 @@ class Store:
             if user_id is not None:
                 query = query.where(TaskRow.user_id == user_id)
             return [_task(row) for row in db.scalars(query).all()]
+
+    # per-step screenshots
+    def save_step_screenshot(self, task_id: str, index: int, data: bytes, content_type: str) -> None:
+        with session_scope() as db:
+            row = db.get(StepScreenshotRow, (task_id, index))
+            if row is None:
+                db.add(StepScreenshotRow(task_id=task_id, step_index=index, content_type=content_type, data=data))
+            else:
+                row.content_type, row.data = content_type, data
+
+    def get_step_screenshot(self, task_id: str, index: int, user_id: str | None = None) -> tuple[bytes, str] | None:
+        with session_scope() as db:
+            task = db.get(TaskRow, task_id)
+            if task is None or (user_id is not None and task.user_id != user_id):
+                return None
+            row = db.get(StepScreenshotRow, (task_id, index))
+            return (row.data, row.content_type) if row else None
 
     # screenshots
     def save_screenshot(self, task_id: str, data: bytes) -> None:

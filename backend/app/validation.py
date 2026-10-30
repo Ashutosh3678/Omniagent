@@ -34,7 +34,12 @@ def _first_error(exc: ValidationError) -> tuple[str, str]:
     return "invalid_parameters", f"{where}: {message}"
 
 
-def validate_plan(raw_steps: list[Any], permitted_apps: list[str]) -> PlanVerdict:
+def validate_plan(
+    raw_steps: list[Any],
+    permitted_apps: list[str],
+    executable: frozenset[str] | set[str] | None = None,
+) -> PlanVerdict:
+    can_run = EXECUTABLE_ACTIONS if executable is None else executable
     steps: list[PlanStep] = []
     held: list[HeldBack] = []
     blocked_by: int | None = None
@@ -48,13 +53,15 @@ def validate_plan(raw_steps: list[Any], permitted_apps: list[str]) -> PlanVerdic
             held.append(HeldBack(index=index, raw=raw_dict, reason="blocked_by_earlier_step", detail=f"Step {blocked_by + 1} was held back"))
             continue
 
-        reason, detail, step = _check(index, raw, raw_action, permitted_apps, current_app, len(steps))
+        reason, detail, step = _check(index, raw, raw_action, permitted_apps, can_run, current_app, len(steps))
         if step is None:
             blocked_by = index
             held.append(HeldBack(index=index, raw=raw_dict, reason=reason, detail=detail))
             continue
         if step.action["type"] == "open_app":
             current_app = step.action["app"]
+        elif step.action["type"] == "browser_navigate":
+            current_app = "browser"
         steps.append(step)
 
     confidence = round(sum(s.confidence for s in steps) / len(steps), 3) if steps else None
@@ -66,6 +73,7 @@ def _check(
     raw: Any,
     raw_action: Any,
     permitted_apps: list[str],
+    can_run: frozenset[str] | set[str],
     current_app: str | None,
     accepted_so_far: int,
 ) -> tuple[str, str, PlanStep | None]:
@@ -88,14 +96,17 @@ def _check(
         reason, detail = _first_error(exc)
         return reason, detail, None
 
-    if action.type not in EXECUTABLE_ACTIONS:
-        return "not_supported", f"{action.type} is not available on this PC yet", None
+    if action.type not in can_run:
+        return "not_supported", f"{action.type} is not available on this PC", None
 
     if isinstance(action, OpenApp):
         if action.app not in KNOWN_APPS:
             return "unknown_app", f"{action.app} is not a supported app", None
         if action.app not in permitted_apps:
             return "app_not_permitted", f"This PC is not allowed to use {action.app}", None
+    elif action.type == "browser_navigate":
+        if "browser" not in permitted_apps:
+            return "app_not_permitted", "This PC is not allowed to use the browser", None
     elif action.type in NEEDS_OPEN_APP and current_app is None:
         return "no_app_open", "Open an app before using it", None
 

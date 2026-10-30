@@ -12,12 +12,15 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.auth import device_token_matches, token_from_header
 from app.config import STEP_TIMEOUT_SECONDS, TASK_TIMEOUT_SECONDS
 from app.models import Task, utcnow
+from app.schema import ACTION_TYPES
 from app.store import store
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_STEP_STATUSES = {"running", "success", "failed", "skipped"}
+_STEP_STATUSES = {"running", "success", "failed", "unverified", "skipped"}
+MAX_STEP_SCREENSHOT_BYTES = 1_500_000
+_SCREENSHOT_TYPES = {"image/jpeg", "image/png"}
 
 
 async def send_task(agent_id: str, task: Task) -> bool:
@@ -35,6 +38,19 @@ async def send_task(agent_id: str, task: Task) -> bool:
         return True
     except Exception:
         logger.exception("Failed to dispatch task %s to agent %s", task.id, agent_id)
+        return False
+
+
+async def send_cancel(agent_id: str, task_id: str) -> bool:
+    """Tells the agent to stop a task after its current step. False if the PC is not connected."""
+    socket = store.sockets.get(agent_id)
+    if socket is None:
+        return False
+    try:
+        await socket.send_json({"type": "cancel", "task_id": task_id})
+        return True
+    except Exception:
+        logger.exception("Failed to send cancel for task %s to agent %s", task_id, agent_id)
         return False
 
 
@@ -81,12 +97,32 @@ async def agent_socket(websocket: WebSocket, agent_id: str) -> None:
         await websocket.close()
 
 
+def _decode_step_screenshot(message: dict[str, Any]) -> tuple[bytes, str] | None:
+    encoded = message.get("screenshot_b64")
+    if not isinstance(encoded, str) or not encoded:
+        return None
+    content_type = message.get("content_type") or "image/jpeg"
+    if content_type not in _SCREENSHOT_TYPES or len(encoded) > MAX_STEP_SCREENSHOT_BYTES * 4 // 3 + 8:
+        return None
+    try:
+        data = base64.b64decode(encoded, validate=True)
+    except ValueError:
+        return None
+    return (data, content_type) if 0 < len(data) <= MAX_STEP_SCREENSHOT_BYTES else None
+
+
 async def _handle_agent_message(agent_id: str, message: dict[str, Any]) -> None:
     kind = message.get("type")
     task_id = message.get("task_id")
     task = store.get_task(task_id) if task_id else None
 
     if kind == "pong":
+        return
+
+    if kind == "capabilities":
+        actions = message.get("actions")
+        if isinstance(actions, list):
+            store.set_capabilities(agent_id, [a for a in actions if a in ACTION_TYPES])
         return
 
     if kind == "ack" and task and task.agent_id == agent_id:
@@ -105,7 +141,11 @@ async def _handle_agent_message(agent_id: str, message: dict[str, Any]) -> None:
         new_status = message.get("status")
         if isinstance(index, int) and 0 <= index < len(task.plan) and new_status in _STEP_STATUSES:
             task.steps[index].status = new_status
-            task.steps[index].detail = str(message.get("detail") or "")
+            task.steps[index].detail = str(message.get("detail") or "")[:500]
+            shot = _decode_step_screenshot(message)
+            if shot is not None:
+                store.save_step_screenshot(task.id, index, shot[0], shot[1])
+                task.steps[index].has_screenshot = True
             task.updated_at = utcnow()
             store.save_task(task)
         return

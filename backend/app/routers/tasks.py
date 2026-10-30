@@ -18,7 +18,7 @@ from app.planning import (
     unsupported_message,
 )
 from app.store import store
-from app.ws import fail_if_timed_out, send_task
+from app.ws import fail_if_timed_out, send_cancel, send_task
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
 
@@ -109,15 +109,31 @@ def get_screenshot(task_id: str, user: User = Depends(get_current_user)) -> Resp
     return Response(content=data, media_type="image/png")
 
 
+@router.get("/{task_id}/steps/{index}/screenshot")
+def get_step_screenshot(task_id: str, index: int, user: User = Depends(get_current_user)) -> Response:
+    found = store.get_step_screenshot(task_id, index, user.id)
+    if found is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Screenshot not found")
+    return Response(content=found[0], media_type=found[1])
+
+
 @router.post("/{task_id}/cancel", response_model=TaskPublic)
-def cancel_task(task_id: str, user: User = Depends(get_current_user)) -> TaskPublic:
+async def cancel_task(task_id: str, user: User = Depends(get_current_user)) -> TaskPublic:
+    """Marks the task cancelled and tells the PC to stop after the step it is on."""
     task = store.get_task(task_id, user.id)
     if task is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Task not found")
-    if task.status in {"completed", "failed"}:
+    if task.status in {"completed", "partial", "failed"}:
         return TaskPublic.from_task(task)
     task.status = "failed"
     task.error = "Cancelled"
     task.log("Cancelled by client")
+    for step in task.steps:
+        if step.status in {"pending", "running"}:
+            step.status = "skipped"
     store.save_task(task)
+    store.add_audit("task_cancelled", "info", user_id=user.id, agent_id=task.agent_id, task_id=task.id)
+    if not await send_cancel(task.agent_id, task.id):
+        task.log("PC was not connected to receive the cancel")
+        store.save_task(task)
     return TaskPublic.from_task(task)

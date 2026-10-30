@@ -17,6 +17,7 @@ class LiveScreen extends StatefulWidget {
 
 class _LiveScreenState extends State<LiveScreen> {
   Uint8List? _bytes;
+  String _caption = '';
   Timer? _poll;
 
   TaskItem? get _task {
@@ -41,8 +42,22 @@ class _LiveScreenState extends State<LiveScreen> {
     final id = _task?.id;
     if (id == null) return;
     try {
-      final bytes = await omniApi.getScreenshot(id);
-      if (mounted && bytes != null) setState(() => _bytes = bytes);
+      // Newest step thumbnail first; the final full screenshot once the task has finished.
+      final latest = await omniApi.getTask(id);
+      final index = latest.steps.lastIndexWhere((step) => step.hasScreenshot);
+      Uint8List? bytes;
+      var caption = '';
+      if (index >= 0) {
+        bytes = await omniApi.getStepScreenshot(id, index);
+        caption = latest.steps[index].name;
+      }
+      bytes ??= await omniApi.getScreenshot(id);
+      if (mounted && bytes != null) {
+        setState(() {
+          _bytes = bytes;
+          _caption = caption;
+        });
+      }
     } catch (_) {}
   }
 
@@ -58,6 +73,10 @@ class _LiveScreenState extends State<LiveScreen> {
         child: Column(
           children: [
             Expanded(child: ScreenPreview(bytes: _bytes)),
+            if (_caption.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Text('After: $_caption', style: Theme.of(context).textTheme.bodySmall),
+            ],
             const SizedBox(height: 16),
             OutlinedButton(
               onPressed: () async {

@@ -7,6 +7,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.schema import EXECUTABLE_ACTIONS, LEGACY_ACTIONS
+
 TaskStatus = Literal["pending", "running", "completed", "partial", "failed"]
 
 
@@ -23,8 +25,9 @@ class Step(BaseModel):
     """What the app shows for one plan step."""
 
     name: str
-    status: Literal["pending", "running", "success", "failed", "skipped", "held_back"] = "pending"
+    status: Literal["pending", "running", "success", "failed", "unverified", "skipped", "held_back"] = "pending"
     detail: str = ""
+    has_screenshot: bool = False
 
 
 class PlanStep(BaseModel):
@@ -100,6 +103,14 @@ class Agent(BaseModel):
     permitted_apps: list[str] = Field(default_factory=lambda: ["notepad"])
     expires_at: datetime | None = None
     revoked_at: datetime | None = None
+    # Actions the PC's agent says it can run; None until it reports (older agents).
+    capabilities: list[str] | None = None
+
+    @property
+    def executable_actions(self) -> frozenset[str]:
+        if self.capabilities is None:
+            return LEGACY_ACTIONS
+        return frozenset(self.capabilities) & EXECUTABLE_ACTIONS
 
     @property
     def expired(self) -> bool:
@@ -226,6 +237,7 @@ class AgentPublic(BaseModel):
     status: AgentStatus = "active"
     permitted_apps: list[str] = Field(default_factory=list)
     expires_at: datetime | None = None
+    actions: list[str] = Field(default_factory=list)
 
     @classmethod
     def from_agent(cls, agent: Agent) -> AgentPublic:
@@ -237,6 +249,7 @@ class AgentPublic(BaseModel):
             status="revoked" if agent.status == "revoked" else "active",
             permitted_apps=agent.permitted_apps,
             expires_at=agent.expires_at,
+            actions=sorted(agent.executable_actions),
         )
 
 

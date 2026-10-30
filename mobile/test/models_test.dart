@@ -24,4 +24,22 @@ void main() {
   test('unknown status falls back to pending', () {
     expect(TaskItem.fromJson({'status': 'weird'}).status, TaskStatus.pending);
   });
+
+  test('steps carry their screenshot flag and problems are easy to spot', () {
+    final task = TaskItem.fromJson({
+      'status': 'partial',
+      'steps': [
+        {'name': 'Open Notepad', 'status': 'success', 'has_screenshot': true},
+        {'name': 'Type "hi"', 'status': 'unverified', 'detail': 'could not confirm it on screen (best match 0.12)'},
+        {'name': 'Press Enter', 'status': 'skipped'},
+      ],
+    });
+    expect(task.steps.map((s) => s.hasScreenshot), [true, false, false]);
+    expect(task.steps.map((s) => s.hasProblem), [false, true, false]);
+  });
+
+  test('a PC can browse only when its agent says so', () {
+    expect(const PcDevice(name: 'a', hostName: 'h', online: true, actions: ['open_app']).canBrowse, isFalse);
+    expect(const PcDevice(name: 'a', hostName: 'h', online: true, actions: ['browser_navigate']).canBrowse, isTrue);
+  });
 }

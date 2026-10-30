@@ -59,9 +59,40 @@ expires after 10 minutes. The first run pairs this PC with your account and
 saves a per-device token in `~/.omniagent/agent.json`; later runs reuse it and
 need no code. If you remove the PC in the app, or its access expires, the
 backend refuses it: run again with `--reset` and a new code.
-The agent runs validated plans step by step (open Notepad, type text, press keys,
-wait, screenshot) and stops at the first failing step. Anything else is refused.
-Tests for the plan runner and message protocol: run `pytest` in this folder.
+### How a step runs
+
+For every step the agent acts, looks at the screen, and checks the result:
+
+1. **Act.** If nothing happened (for example the window was not ready), it tries again,
+   up to 3 attempts.
+2. **Verify.** If the step says what should now be visible (typed text, the app's window
+   title, a site name), the agent reads the text on screen and compares it with local
+   64-dimensional hashed embeddings and cosine similarity (threshold 0.6). If it does not
+   match yet, it looks again after a short wait, up to 3 looks. It never repeats an action
+   to "fix" it, because typing twice is worse than not confirming.
+3. A step that acted but could not be confirmed is reported as **unverified** and stops the
+   plan, which ends as `partial`. After every step the agent sends a small screenshot.
+
+No model or network is used for verification.
+
+### What this PC can do
+
+On connect the agent tells the backend which actions it can run, and only those are planned
+for it: open/type/press keys/click/wait/screenshot always, **scroll** if `pyautogui` is
+installed, and **browser navigation** if `playwright` is installed (it drives your installed
+Edge or Chrome in a fresh window; nothing is downloaded and downloads are blocked). The
+browser also needs "Allow web browsing" switched on for this PC in the app.
+
+### Staying connected and stopping
+
+- If the connection drops, the agent reconnects with growing waits (1s up to 30s). If the
+  backend says this PC was removed or is no longer allowed, it stops and asks you to pair again.
+- Cancel in the app stops the task after the step it is on. Losing the connection also stops it.
+- One task runs at a time.
+- **Emergency stop:** move the mouse to the top-left corner of the screen (PyAutoGUI's
+  failsafe) or press Ctrl+C in this window.
+
+Tests (plan runner, verification, drivers, protocol, reconnect): run `pytest` in this folder.
 
 Type a custom message:
 

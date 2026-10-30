@@ -42,8 +42,13 @@ to a long random value outside local dev (a dev default is built in).
 
 A task is a plan: an ordered list of typed steps (`app/schema.py`). Each step is one of
 `open_app`, `type_text`, `press_key`, `wait`, `screenshot`, `click`, `scroll`,
-`browser_navigate`; extra or missing parameters are rejected. Only the first five can run
-on the Windows agent today (`EXECUTABLE_ACTIONS`).
+`browser_navigate`; extra or missing parameters are rejected. Apps are `notepad` and
+`browser` (off by default; turn it on per PC with `PATCH /agents/{id}`). Browser addresses
+must be public `http(s)` pages: no logins in the URL, no local or private network hosts.
+
+What a PC can run is what its agent reports on connect (`capabilities` message, shown as
+`actions` in `GET /agents`). Until an agent reports, it is treated as an older one that can
+only open, type, press keys, wait and take screenshots.
 
 `app/validation.py` checks every step: known action, valid parameters, runnable on the
 PC, and inside the PC's permitted apps. The first step that fails is held back with a
@@ -52,9 +57,15 @@ reason (`unknown_action`, `invalid_parameters`, `not_supported`, `unknown_app`,
 clean prefix is sent; if nothing can run, the task is refused. A plan with held-back steps
 ends as `partial`. Plan confidence is the mean confidence of the accepted steps.
 
-WebSocket messages: the backend sends `task` with `plan`; the agent replies with `ack`,
-`step` (`index`, `status`: running/success/failed/skipped, `detail`) and `result`
-(`completed`/`partial`/`failed`).
+WebSocket messages: agent to backend: `capabilities` (`actions`), `ack`, `step` (`index`,
+`status`: running/success/failed/unverified/skipped, `detail`, optional JPEG
+`screenshot_b64`) and `result` (`completed`/`partial`/`failed`). Backend to agent: `task`
+(with `plan`) and `cancel`. `unverified` means the agent acted but could not confirm the
+result on screen. Connection health uses the WebSocket protocol's own ping/pong.
+
+Step thumbnails: `GET /api/v1/tasks/{id}/steps/{index}/screenshot`.
+`POST /api/v1/tasks/{id}/cancel` marks the task cancelled and tells the agent to stop
+after its current step.
 
 ## Planner (Groq)
 

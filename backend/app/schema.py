@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Annotated, Literal, Union
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
 
@@ -68,6 +70,33 @@ class BrowserNavigate(_Action):
     type: Literal["browser_navigate"]
     url: str = Field(pattern=r"^https?://", max_length=2000)
 
+    @field_validator("url")
+    @classmethod
+    def _public_web_address(cls, url: str) -> str:
+        """Only ordinary public web pages: no logins in the URL, no local or private network hosts."""
+        parts = urlsplit(url)
+        host = (parts.hostname or "").lower()
+        if not host or parts.username or parts.password:
+            raise ValueError("Use a plain web address without a username or password")
+        if _is_ip(host):
+            private = not ipaddress.ip_address(host.strip("[]")).is_global
+        else:
+            private = host == "localhost" or "." not in host or host.endswith(_LOCAL_SUFFIXES)
+        if private:
+            raise ValueError("Local and private network addresses are not allowed")
+        return url
+
+
+_LOCAL_SUFFIXES = (".local", ".localhost", ".internal", ".lan", ".home", ".corp")
+
+
+def _is_ip(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return False
+    return True
+
 
 Action = Annotated[
     Union[OpenApp, TypeText, PressKey, Wait, Screenshot, Click, Scroll, BrowserNavigate],
@@ -78,11 +107,13 @@ action_adapter: TypeAdapter[Action] = TypeAdapter(Action)
 ACTION_TYPES = frozenset(
     {"open_app", "type_text", "press_key", "wait", "screenshot", "click", "scroll", "browser_navigate"}
 )
-# What the Windows agent can actually do today. Widened as the agent learns more actions.
-EXECUTABLE_ACTIONS = frozenset({"open_app", "type_text", "press_key", "wait", "screenshot"})
+# Everything this system can plan. What a given PC can run is what its agent reports (Agent.executable_actions).
+EXECUTABLE_ACTIONS = ACTION_TYPES
+# What agents from before capability reporting could run.
+LEGACY_ACTIONS = frozenset({"open_app", "type_text", "press_key", "wait", "screenshot"})
 # Actions that act inside an app, so an app must have been opened earlier in the plan.
 NEEDS_OPEN_APP = frozenset({"type_text", "press_key", "click", "scroll"})
-KNOWN_APPS = frozenset({"notepad"})
+KNOWN_APPS = frozenset({"notepad", "browser"})
 
 
 def describe(action: _Action) -> str:
