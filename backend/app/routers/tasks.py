@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 
 from app.actions import InvalidActionError, parse_instruction
 from app.auth import get_current_user
+from app.dispatch import authorize_dispatch, deny
 from app.models import CreateTaskRequest, Task, TaskPublic, User
 from app.store import store
 from app.ws import fail_if_timed_out, send_task
@@ -23,13 +24,9 @@ async def create_task(
     try:
         action = parse_instruction(body.instruction)
     except InvalidActionError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+        deny(status.HTTP_400_BAD_REQUEST, "invalid_instruction", str(exc), user=user)
 
-    agent = store.resolve_agent(body.agent_id, user.id)
-    if agent is None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "No connected Windows PC agent")
-    if not agent.online:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Agent is disconnected")
+    agent = authorize_dispatch(user, body.agent_id, action)
 
     task = Task(
         id=store.new_id(),
@@ -47,11 +44,12 @@ async def create_task(
         task.error = "Agent is disconnected"
         task.log("Dispatch failed")
         store.save_task(task)
-        raise HTTPException(status.HTTP_409_CONFLICT, "Agent is disconnected")
+        deny(status.HTTP_503_SERVICE_UNAVAILABLE, "dispatch_failed", "This PC is offline", user=user, agent=agent)
 
     task.status = "running"
     task.log("Dispatched to agent")
     store.save_task(task)
+    store.add_audit("dispatch_permitted", "permit", action.type, user_id=user.id, agent_id=agent.id, task_id=task.id)
     asyncio.create_task(fail_if_timed_out(task.id))
     return TaskPublic.from_task(task)
 

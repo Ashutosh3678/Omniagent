@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
-import getpass
 import json
 import logging
 import os
@@ -33,7 +32,7 @@ def _request(method: str, url: str, token: str, payload: dict[str, Any] | None =
         data=data,
         method=method,
         headers={
-            "Authorization": f"Bearer {token}",
+            **({"Authorization": f"Bearer {token}"} if token else {}),
             "Content-Type": "application/json",
         },
     )
@@ -41,19 +40,13 @@ def _request(method: str, url: str, token: str, payload: dict[str, Any] | None =
         return json.loads(response.read().decode())
 
 
-def login(api: str, email: str, password: str) -> str:
-    body = _request(
-        "POST", f"{api.rstrip('/')}/api/v1/auth/login", "", {"email": email, "password": password}
-    )
-    return str(body["access_token"])
-
-
-def register_agent(api: str, user_token: str, name: str, hostname: str) -> dict[str, Any]:
+def pair(api: str, code: str, name: str, hostname: str) -> dict[str, Any]:
+    """Exchange the one-time code from the phone app for this PC's device token."""
     return _request(
         "POST",
-        f"{api.rstrip('/')}/api/v1/agents/register",
-        user_token,
-        {"name": name, "hostname": hostname},
+        f"{api.rstrip('/')}/api/v1/agents/pair",
+        "",
+        {"code": code, "name": name, "hostname": hostname},
     )
 
 
@@ -74,16 +67,15 @@ def save_credentials(api: str, agent_id: str, device_token: str) -> None:
     )
 
 
-def ensure_credentials(api: str, name: str, hostname: str, email: str, password: str) -> dict[str, str]:
-    """Reuse the saved device credentials, or sign in once to register this PC."""
+def ensure_credentials(api: str, name: str, hostname: str, code: str) -> dict[str, str]:
+    """Reuse the saved device credentials, or pair once with a code from the phone app."""
     saved = load_credentials(api)
     if saved:
         return saved
-    email = email or input("OmniAgent account email: ").strip()
-    password = password or getpass.getpass("Password: ")
-    registered = register_agent(api, login(api, email, password), name, hostname)
-    save_credentials(api, registered["id"], registered["device_token"])
-    logger.info("Registered %s (%s); device credentials saved to %s", name, registered["id"], CREDENTIALS_FILE)
+    code = code or input("Pairing code from the OmniAgent app (Devices > Add PC): ").strip()
+    paired = pair(api, code, name, hostname)
+    save_credentials(api, paired["id"], paired["device_token"])
+    logger.info("Paired %s (%s); device credentials saved to %s", name, paired["id"], CREDENTIALS_FILE)
     return load_credentials(api) or {}
 
 
@@ -153,8 +145,8 @@ async def handle_task(ws: Any, message: dict[str, Any]) -> None:
     )
 
 
-async def run_client(api: str, name: str, hostname: str, email: str = "", password: str = "") -> None:
-    creds = await asyncio.to_thread(ensure_credentials, api, name, hostname, email, password)
+async def run_client(api: str, name: str, hostname: str, code: str = "") -> None:
+    creds = await asyncio.to_thread(ensure_credentials, api, name, hostname, code)
     agent_id, token = creds["agent_id"], creds["device_token"]
     url = _ws_url(api, agent_id)
     async with websockets.connect(
@@ -170,8 +162,7 @@ async def run_client(api: str, name: str, hostname: str, email: str = "", passwo
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="OmniAgent Windows PC connector")
     parser.add_argument("--api", default=DEFAULT_API)
-    parser.add_argument("--email", default=os.environ.get("OMNIAGENT_EMAIL", ""))
-    parser.add_argument("--password", default=os.environ.get("OMNIAGENT_PASSWORD", ""))
+    parser.add_argument("--code", default=os.environ.get("OMNIAGENT_PAIRING_CODE", ""), help="pairing code from the app")
     parser.add_argument("--reset", action="store_true", help="forget saved device credentials")
     parser.add_argument("--name", default=os.environ.get("OMNIAGENT_PC_NAME", "Office PC"))
     parser.add_argument("--hostname", default=socket.gethostname())
@@ -180,14 +171,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.reset:
         CREDENTIALS_FILE.unlink(missing_ok=True)
     try:
-        asyncio.run(run_client(args.api, args.name, args.hostname, args.email, args.password))
+        asyncio.run(run_client(args.api, args.name, args.hostname, args.code))
     except KeyboardInterrupt:
         return 0
     except urllib.error.HTTPError as exc:
-        logger.error("Backend refused the request (%s). Check your email and password.", exc.code)
+        if exc.code == 429:
+            logger.error("Too many pairing attempts. Wait a few minutes and try again.")
+        else:
+            logger.error("Pairing failed (%s). The code may be wrong, used, or expired: make a new one in the app.", exc.code)
         return 1
     except websockets.exceptions.InvalidStatus as exc:
-        logger.error("Backend rejected this PC (%s). Run again with --reset to sign in and re-register.", exc.response.status_code)
+        logger.error(
+            "Backend rejected this PC (%s). It may have been removed or expired. Run with --reset and pair again.",
+            exc.response.status_code,
+        )
         return 1
     except (urllib.error.URLError, OSError) as exc:
         logger.error("Could not reach backend: %s", exc)

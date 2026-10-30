@@ -66,6 +66,9 @@ class TokenResponse(BaseModel):
     user: UserPublic
 
 
+AgentStatus = Literal["active", "revoked"]
+
+
 class Agent(BaseModel):
     id: str
     user_id: str | None = None
@@ -73,6 +76,17 @@ class Agent(BaseModel):
     hostname: str
     online: bool = False
     connected_at: datetime | None = None
+    status: AgentStatus = "active"
+    permitted_apps: list[str] = Field(default_factory=lambda: ["notepad"])
+    expires_at: datetime | None = None
+    revoked_at: datetime | None = None
+
+    @property
+    def expired(self) -> bool:
+        if self.expires_at is None:
+            return False
+        expires = self.expires_at if self.expires_at.tzinfo else self.expires_at.replace(tzinfo=timezone.utc)
+        return expires <= utcnow()
 
 
 class Task(BaseModel):
@@ -95,9 +109,33 @@ class Task(BaseModel):
         self.updated_at = utcnow()
 
 
-class RegisterAgentRequest(BaseModel):
-    name: str = "Office PC"
-    hostname: str = "WINDOWS-PC"
+class PairAgentRequest(BaseModel):
+    code: str = Field(min_length=4, max_length=32)
+    name: str = Field(default="Office PC", max_length=120)
+    hostname: str = Field(default="WINDOWS-PC", max_length=255)
+
+
+class PairingCodeResponse(BaseModel):
+    code: str
+    expires_at: datetime
+
+
+class UpdateAgentRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    permitted_apps: list[str] | None = None
+    expires_at: datetime | None = None
+    clear_expiry: bool = False
+
+
+class AuditEvent(BaseModel):
+    id: str
+    user_id: str | None = None
+    agent_id: str | None = None
+    task_id: str | None = None
+    event: str
+    decision: Literal["permit", "deny", "info"]
+    reason: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 class CreateTaskRequest(BaseModel):
@@ -140,6 +178,21 @@ class AgentPublic(BaseModel):
     name: str
     hostname: str
     online: bool
+    status: AgentStatus = "active"
+    permitted_apps: list[str] = Field(default_factory=list)
+    expires_at: datetime | None = None
+
+    @classmethod
+    def from_agent(cls, agent: Agent) -> AgentPublic:
+        return cls(
+            id=agent.id,
+            name=agent.name,
+            hostname=agent.hostname,
+            online=agent.online,
+            status="revoked" if agent.status == "revoked" else "active",
+            permitted_apps=agent.permitted_apps,
+            expires_at=agent.expires_at,
+        )
 
 
 class AgentRegistered(AgentPublic):

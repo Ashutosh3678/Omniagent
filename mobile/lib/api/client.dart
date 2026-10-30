@@ -61,8 +61,25 @@ class OmniApi {
         name: map['name'] as String,
         hostName: map['hostname'] as String,
         online: map['online'] as bool? ?? false,
+        revoked: map['status'] == 'revoked',
+        permittedApps: [
+          for (final app in (map['permitted_apps'] as List<dynamic>? ?? const [])) app as String,
+        ],
+        expiresAt: map['expires_at'] == null ? null : DateTime.parse(map['expires_at'] as String).toLocal(),
       );
     }).toList();
+  }
+
+  Future<PairingCode> createPairingCode() async {
+    final body = await _send('POST', '/api/v1/agents/pairing-code', const {}) as Map<String, dynamic>;
+    return PairingCode(
+      code: body['code'] as String,
+      expiresAt: DateTime.parse(body['expires_at'] as String).toLocal(),
+    );
+  }
+
+  Future<void> revokeAgent(String id) async {
+    await _send('POST', '/api/v1/agents/$id/revoke', const {});
   }
 
   Future<TaskItem> createTask(String instruction, {String? agentId}) async {

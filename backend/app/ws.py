@@ -54,7 +54,13 @@ async def agent_socket(websocket: WebSocket, agent_id: str) -> None:
         return
     presented = token_from_header(websocket.headers.get("authorization"))
     if not device_token_matches(presented, store.get_agent_token_hash(agent_id)):
+        store.add_audit("connection_denied", "deny", "bad_device_token", user_id=agent.user_id, agent_id=agent_id)
         await websocket.close(code=4401)
+        return
+    if agent.status != "active" or agent.expired:
+        reason = "device_revoked" if agent.status != "active" else "device_expired"
+        store.add_audit("connection_denied", "deny", reason, user_id=agent.user_id, agent_id=agent_id)
+        await websocket.close(code=4403)
         return
 
     await websocket.accept()

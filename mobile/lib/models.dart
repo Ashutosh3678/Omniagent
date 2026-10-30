@@ -71,10 +71,28 @@ class PcDevice {
     required this.hostName,
     required this.online,
     this.id,
+    this.revoked = false,
+    this.permittedApps = const [],
+    this.expiresAt,
   });
 
   final String? id;
   final String name;
   final String hostName;
   final bool online;
+  final bool revoked;
+  final List<String> permittedApps;
+  final DateTime? expiresAt;
+
+  bool get expired => expiresAt != null && !expiresAt!.isAfter(DateTime.now());
+
+  /// Whether tasks can be sent to this PC right now.
+  bool get usable => online && !revoked && !expired;
+}
+
+class PairingCode {
+  const PairingCode({required this.code, required this.expiresAt});
+
+  final String code;
+  final DateTime expiresAt;
 }

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, LargeBinary, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, LargeBinary, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,6 +30,10 @@ class AgentRow(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), index=True, nullable=True)
     token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="active", server_default="active")
+    permitted_apps: Mapped[list] = mapped_column(Json, default=list, server_default=text("'[\"notepad\"]'"))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     name: Mapped[str] = mapped_column(String(120))
     hostname: Mapped[str] = mapped_column(String(255))
     online: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -60,3 +64,27 @@ class ScreenshotRow(Base):
 
     task_id: Mapped[str] = mapped_column(ForeignKey("tasks.id"), primary_key=True)
     data: Mapped[bytes] = mapped_column(LargeBinary)
+
+
+class PairingCodeRow(Base):
+    __tablename__ = "pairing_codes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    code_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AuditRow(Base):
+    __tablename__ = "audit_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), index=True, nullable=True)
+    agent_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
+    task_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    event: Mapped[str] = mapped_column(String(48))
+    decision: Mapped[str] = mapped_column(String(8))
+    reason: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

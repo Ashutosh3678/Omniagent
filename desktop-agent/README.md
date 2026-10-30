@@ -51,13 +51,14 @@ Start the backend first, then:
 
 ```powershell
 pip install -r requirements.txt
-python connect.py --api http://127.0.0.1:8000 --email you@example.com --name "Office PC"
+python connect.py --api http://127.0.0.1:8000 --code ABCD-EFGH --name "Office PC"
 ```
 
-The first run signs in with your OmniAgent account (it prompts for the password
-if `--password` / `OMNIAGENT_PASSWORD` is not set), registers this PC under
-your account, and saves a per-device token in `~/.omniagent/agent.json`. Later
-runs reuse that token and need no password. Use `--reset` to sign in again.
+Get the code in the phone app under **Devices > Add PC**. It works once and
+expires after 10 minutes. The first run pairs this PC with your account and
+saves a per-device token in `~/.omniagent/agent.json`; later runs reuse it and
+need no code. If you remove the PC in the app, or its access expires, the
+backend refuses it: run again with `--reset` and a new code.
 The agent only runs allowlisted Notepad tasks.
 
 Type a custom message:

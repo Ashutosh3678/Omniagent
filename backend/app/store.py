@@ -10,8 +10,8 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.db import Base, get_engine, session_scope
-from app.models import Agent, Task, User, utcnow
-from app.orm import AgentRow, ScreenshotRow, TaskRow, UserRow
+from app.models import Agent, AuditEvent, Task, User, utcnow
+from app.orm import AgentRow, AuditRow, PairingCodeRow, ScreenshotRow, TaskRow, UserRow
 
 
 def _aware(value: datetime | None) -> datetime | None:
@@ -38,6 +38,10 @@ def _agent(row: AgentRow) -> Agent:
         hostname=row.hostname,
         online=row.online,
         connected_at=_aware(row.connected_at),
+        status=row.status,
+        permitted_apps=list(row.permitted_apps or []),
+        expires_at=_aware(row.expires_at),
+        revoked_at=_aware(row.revoked_at),
     )
 
 
@@ -112,6 +116,81 @@ class Store:
             row = db.scalar(select(UserRow).where(UserRow.email == email))
             return _user(row) if row else None
 
+    # pairing codes
+    def add_pairing_code(self, user_id: str, code_hash: str, expires_at: datetime) -> None:
+        with session_scope() as db:
+            db.add(
+                PairingCodeRow(
+                    id=self.new_id(),
+                    user_id=user_id,
+                    code_hash=code_hash,
+                    expires_at=expires_at,
+                    created_at=utcnow(),
+                )
+            )
+
+    def consume_pairing_code(self, code_hash: str) -> str | None:
+        """Atomically marks a valid, unused, unexpired code as used. Returns its owner's id."""
+        now = utcnow()
+        with session_scope() as db:
+            return db.scalar(
+                update(PairingCodeRow)
+                .where(
+                    PairingCodeRow.code_hash == code_hash,
+                    PairingCodeRow.used_at.is_(None),
+                    PairingCodeRow.expires_at > now,
+                )
+                .values(used_at=now)
+                .returning(PairingCodeRow.user_id)
+            )
+
+    # audit
+    def add_audit(
+        self,
+        event: str,
+        decision: str,
+        reason: str = "",
+        *,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        task_id: str | None = None,
+    ) -> None:
+        with session_scope() as db:
+            db.add(
+                AuditRow(
+                    id=self.new_id(),
+                    user_id=user_id,
+                    agent_id=agent_id,
+                    task_id=task_id,
+                    event=event,
+                    decision=decision,
+                    reason=reason,
+                    created_at=utcnow(),
+                )
+            )
+
+    def list_audit(self, user_id: str, limit: int = 100) -> list[AuditEvent]:
+        with session_scope() as db:
+            rows = db.scalars(
+                select(AuditRow)
+                .where(AuditRow.user_id == user_id)
+                .order_by(AuditRow.created_at.desc())
+                .limit(limit)
+            ).all()
+            return [
+                AuditEvent(
+                    id=row.id,
+                    user_id=row.user_id,
+                    agent_id=row.agent_id,
+                    task_id=row.task_id,
+                    event=row.event,
+                    decision=row.decision,
+                    reason=row.reason,
+                    created_at=_aware(row.created_at),
+                )
+                for row in rows
+            ]
+
     # agents
     def add_agent(self, agent: Agent, token_hash: str) -> None:
         with session_scope() as db:
@@ -125,6 +204,17 @@ class Store:
                 return None
             return _agent(row)
 
+    def update_agent(self, agent: Agent) -> None:
+        with session_scope() as db:
+            row = db.get(AgentRow, agent.id)
+            if row is None:
+                return
+            row.name = agent.name
+            row.status = agent.status
+            row.permitted_apps = list(agent.permitted_apps)
+            row.expires_at = agent.expires_at
+            row.revoked_at = agent.revoked_at
+
     def get_agent_token_hash(self, agent_id: str) -> str | None:
         with session_scope() as db:
             row = db.get(AgentRow, agent_id)
@@ -136,12 +226,6 @@ class Store:
             if user_id is not None:
                 query = query.where(AgentRow.user_id == user_id)
             return [_agent(row) for row in db.scalars(query).all()]
-
-    def resolve_agent(self, agent_id: str | None, user_id: str) -> Agent | None:
-        if agent_id:
-            return self.get_agent(agent_id, user_id)
-        online = [agent for agent in self.list_agents(user_id) if agent.online]
-        return online[0] if len(online) == 1 else None
 
     def mark_all_offline(self) -> None:
         """Sockets do not survive a restart, so nothing can still be online."""
@@ -162,13 +246,9 @@ class Store:
             row.connected_at = utcnow()
         self.sockets[agent_id] = socket
 
-    def set_offline(self, agent_id: str) -> list[Task]:
-        self.sockets.pop(agent_id, None)
+    def fail_active_tasks(self, agent_id: str, reason: str) -> list[Task]:
         failed: list[Task] = []
         with session_scope() as db:
-            agent = db.get(AgentRow, agent_id)
-            if agent:
-                agent.online = False
             rows = db.scalars(
                 select(TaskRow).where(
                     TaskRow.agent_id == agent_id,
@@ -178,12 +258,20 @@ class Store:
             for row in rows:
                 task = _task(row)
                 task.status = "failed"
-                task.error = "Agent disconnected"
-                task.log("Agent disconnected")
+                task.error = reason
+                task.log(reason)
                 for key, value in _task_values(task).items():
                     setattr(row, key, value)
                 failed.append(task)
         return failed
+
+    def set_offline(self, agent_id: str) -> list[Task]:
+        self.sockets.pop(agent_id, None)
+        with session_scope() as db:
+            agent = db.get(AgentRow, agent_id)
+            if agent:
+                agent.online = False
+        return self.fail_active_tasks(agent_id, "Agent disconnected")
 
     # tasks
     def save_task(self, task: Task) -> None:

@@ -12,6 +12,11 @@ _NOTEPAD = re.compile(
 )
 
 
+# Which application each action drives. A device may only run actions whose app it is permitted.
+ACTION_APP = {"open_notepad": "notepad"}
+KNOWN_APPS = frozenset(ACTION_APP.values())
+
+
 class InvalidActionError(ValueError):
     pass
 

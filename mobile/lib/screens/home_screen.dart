@@ -51,9 +51,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   PcDevice? get _device {
     for (final agent in _agents) {
-      if (agent.online) return agent;
+      if (agent.usable) return agent;
     }
-    return _agents.isEmpty ? null : _agents.first;
+    for (final agent in _agents) {
+      if (!agent.revoked) return agent;
+    }
+    return null;
   }
 
   Future<void> _runTask() async {
@@ -76,7 +79,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final online = _device?.online ?? false;
+    final online = _device?.usable ?? false;
     final recent = _recent.isEmpty ? kHistory.take(2).toList() : _recent;
 
     return Scaffold(
