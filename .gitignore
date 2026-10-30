@@ -32,3 +32,4 @@ dist/
 # Local docs and reports (not part of the codebase)
 Omniagent ppts and docs/
 .env
+.env.example
