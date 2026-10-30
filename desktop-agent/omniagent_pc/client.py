@@ -123,6 +123,13 @@ def _default_executors() -> dict[str, Executor]:
     return build_executors()
 
 
+def _default_catalog() -> dict[str, Any]:
+    """The apps and folder names the owner has set up on this PC (see apps.py), read fresh on every connect."""
+    from omniagent_pc import apps
+
+    return apps.catalog()
+
+
 def _default_capture() -> Callable[[], bytes | None]:
     def capture() -> bytes | None:
         from omniagent_pc.screenshot import capture_jpeg
@@ -233,10 +240,17 @@ async def serve(
     executors: dict[str, Executor] | None = None,
     capture: Callable[[], bytes | None] | None = None,
     on_event: EventCallback | None = None,
+    catalog: Callable[[], dict[str, Any]] | None = None,
 ) -> None:
     """Handles one connection until it closes: reports what this PC can do, runs tasks, hears cancels."""
     executors = executors if executors is not None else _default_executors()
-    await _send(ws, {"type": "capabilities", "actions": sorted(executors)})
+    report: dict[str, Any] = {"type": "capabilities", "actions": sorted(executors)}
+    if catalog is not None:  # which apps and folder names the owner set up here; never paths
+        try:
+            report.update(catalog())
+        except Exception:  # noqa: BLE001 - a damaged settings file must not stop the agent connecting
+            logger.exception("Could not read the apps and folders list")
+    await _send(ws, report)
 
     running: dict[str, threading.Event] = {}
     workers: set[asyncio.Task] = set()
@@ -300,6 +314,7 @@ async def run_client(
     capture: Callable[[], bytes | None] | None = None,
     jitter: Callable[[], float] = random.random,
     on_event: EventCallback | None = None,
+    catalog: Callable[[], dict[str, Any]] | None = _default_catalog,
 ) -> None:
     """Stays connected. Returns only by raising RejectedByBackend (or on Ctrl+C)."""
     creds = await asyncio.to_thread(ensure_credentials, api, name, hostname, code)
@@ -322,7 +337,7 @@ async def run_client(
                 logger.info("Connected to %s", url)
                 backoff = 1.0
                 _notify(on_event, "connected", "Connected. Waiting for tasks")
-                await serve(ws, executors, capture, on_event)
+                await serve(ws, executors, capture, on_event, catalog)
             close_code = _close_code(None, ws)
         except websockets.exceptions.InvalidStatus as exc:
             if exc.response.status_code in FATAL_HTTP_STATUSES:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import re
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -100,6 +101,36 @@ async def agent_socket(websocket: WebSocket, agent_id: str) -> None:
         await websocket.close()
 
 
+_APP_ID = re.compile(r"^[a-z0-9_]{1,32}$")
+_WORKSPACE = re.compile(r"^[A-Za-z0-9 _.\-]{1,80}$")
+
+
+def _clean_apps(raw: Any) -> list[dict[str, Any]] | None:
+    """The apps the PC says it can open. Anything malformed is dropped; None means it sent none."""
+    if not isinstance(raw, list):
+        return None
+    apps: dict[str, dict[str, Any]] = {}
+    for item in raw[:60]:
+        if not isinstance(item, dict):
+            continue
+        app_id = item.get("id")
+        if not isinstance(app_id, str) or not _APP_ID.match(app_id) or app_id in apps:
+            continue
+        label = item.get("label")
+        apps[app_id] = {
+            "id": app_id,
+            "label": label.strip()[:40] if isinstance(label, str) and label.strip() else app_id,
+            "needs_workspace": item.get("needs_workspace") is True,
+        }
+    return list(apps.values())
+
+
+def _clean_workspaces(raw: Any) -> list[str] | None:
+    if not isinstance(raw, list):
+        return None
+    return sorted({name for name in raw[:80] if isinstance(name, str) and _WORKSPACE.match(name)})
+
+
 def _image_type(data: bytes) -> str | None:
     if data.startswith(b"\x89PNG"):
         return "image/png"
@@ -169,7 +200,21 @@ async def _handle_agent_message(agent_id: str, message: dict[str, Any]) -> None:
     if kind == "capabilities":
         actions = message.get("actions")
         if isinstance(actions, list):
-            store.set_capabilities(agent_id, [a for a in actions if a in ACTION_TYPES])
+            granted = store.set_capabilities(
+                agent_id,
+                [a for a in actions if a in ACTION_TYPES],
+                _clean_apps(message.get("apps")),
+                _clean_workspaces(message.get("workspaces")),
+            )
+            if granted:
+                owner = store.get_agent(agent_id)
+                store.add_audit(
+                    "default_apps_granted",
+                    "info",
+                    ",".join(granted),
+                    user_id=owner.user_id if owner else None,
+                    agent_id=agent_id,
+                )
         return
 
     if kind == "ack" and task and task.agent_id == agent_id:

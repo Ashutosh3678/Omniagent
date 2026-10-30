@@ -36,7 +36,7 @@ def llm_available() -> bool:
 def unsupported_message() -> str:
     if llm_available():
         return "Could not understand that instruction"
-    return "Unsupported instruction. Allowed: Open Notepad and type <message>"
+    return "Unsupported instruction. Allowed: Open Notepad and type <message>, Open Paint, Open Calculator"
 
 
 async def llm_plan(user: User, agent: Agent, instruction: str) -> PlannerResult:
@@ -47,7 +47,14 @@ async def llm_plan(user: User, agent: Agent, instruction: str) -> PlannerResult:
     if not planner_limiter.allow(user.id):
         deny(status.HTTP_429_TOO_MANY_REQUESTS, "planner_rate_limited", "Too many requests. Wait a moment.", user=user, agent=agent)
     try:
-        result = await llm.plan(instruction, agent.permitted_apps, sorted(agent.executable_actions))
+        usable = [app for app in agent.app_infos if app.id in agent.permitted_apps]
+        result = await llm.plan(
+            instruction,
+            agent.permitted_apps,
+            sorted(agent.executable_actions),
+            apps=[app.model_dump() for app in usable],
+            workspaces=sorted(agent.workspace_names),
+        )
     except PlannerError:
         deny(
             status.HTTP_503_SERVICE_UNAVAILABLE,

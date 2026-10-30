@@ -172,6 +172,22 @@ def test_open_unknown_app_is_refused() -> None:
     assert not executors.open_app({"type": "open_app", "app": "cmd"}, RunContext()).ok
 
 
+def test_browser_driver_close_leaves_the_window_open() -> None:
+    class Probe:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def close(self) -> None:
+            self.calls.append("close")
+
+        def stop(self) -> None:
+            self.calls.append("stop")
+
+    playwright, browser = Probe(), Probe()
+    BrowserDriver(playwright, browser, object()).close()
+    assert playwright.calls == [] and browser.calls == []
+
+
 def test_browser_navigation_expects_the_site_name_and_registers_cleanup(monkeypatch) -> None:
     closed: list[bool] = []
 
@@ -208,6 +224,7 @@ def test_browser_that_cannot_start_is_a_failed_step_not_a_crash(monkeypatch) -> 
             raise DriverUnavailable("Neither Edge nor Chrome could be started")
 
     monkeypatch.setattr(executors, "BrowserDriver", Missing)
+    monkeypatch.setattr(executors.apps, "app_specs", lambda config: {"browser": executors.apps.BUILTIN["browser"]})
     outcome = executors.open_app({"type": "open_app", "app": "browser"}, RunContext())
     assert not outcome.ok and "Edge" in outcome.detail
 

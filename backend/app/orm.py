@@ -35,6 +35,8 @@ class AgentRow(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     capabilities: Mapped[list | None] = mapped_column(Json, nullable=True)
+    apps: Mapped[list | None] = mapped_column(Json, nullable=True)
+    workspaces: Mapped[list | None] = mapped_column(Json, nullable=True)
     name: Mapped[str] = mapped_column(String(120))
     hostname: Mapped[str] = mapped_column(String(255))
     online: Mapped[bool] = mapped_column(Boolean, default=False)

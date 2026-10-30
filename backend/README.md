@@ -132,6 +132,25 @@ CLOUDINARY_URL=cloudinary://<api_key>:<api_secret>@<cloud_name>
 - Task and event payloads carry `screenshot_url` for the task and for each step: a CDN address, or a
   backend path when the image is in the database.
 
+## Apps, folders and Claude Code
+
+What a PC can open is decided on the PC. Its OmniAgent program keeps a list (built-in Notepad, Paint,
+Calculator, the browser and Claude Code, plus programs and **folders** its owner added in the
+OmniAgent window) and reports it on connect: app ids with labels, and folder *names*. Never paths.
+
+- `open_app` takes the app id the PC reported, and for apps that work in a folder (Claude Code) a
+  `workspace` that must be one of the reported folder names. A path is rejected by the schema and
+  could never match a name. The agent checks the list again on the PC when it runs the step.
+- An app must also be switched on for the PC (`permitted_apps`, the switches in the app's Devices
+  screen). New PCs start with Notepad, Paint and Calculator on; the first time a PC reports its apps
+  the same harmless set is switched on for an existing PC. Everything else, including the browser,
+  Claude Code and every added program, stays off until the user turns it on.
+- A step the PC does not have is refused with "X is not set up on this PC"; one that is switched off
+  with "X is turned off for this PC. Turn it on in Devices."
+- The planner is given the usable apps, the folder names and how to drive Claude Code (open it in the
+  folder, wait, type the prompt as one line, press Enter). Plans like this go through the same
+  preview-and-confirm step as any AI plan.
+
 ## Dispatch rules
 
 A task is sent only if every check passes, and the first failure is refused and

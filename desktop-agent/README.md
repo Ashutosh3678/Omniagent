@@ -95,13 +95,31 @@ it: it starts a new tab, and refuses to continue if it cannot get a blank page.
 
 If typing fails after some keys may already have gone in, the step is not repeated.
 
+### Apps, folders and Claude Code
+
+The OmniAgent window has two lists: **Folders your phone may use** and **Extra programs your phone may
+open**. Notepad, Paint and Calculator are built in; **Claude Code** appears once the `claude` command
+works on this PC. Click **Add folder…** to pick a folder (for example your project) and **Add program…**
+to pick a `.exe`. Changes reconnect automatically.
+
+Then, in the phone app, turn the apps on for this PC under **Devices** and say, for example:
+
+> open Claude Code in omniagent and type: fix the failing test in backend/tests
+
+The assistant picks the folder by its name from your list, opens Claude Code there (a terminal running
+plain `claude`, so its own permission questions still appear), waits, types the prompt on one line and
+presses Enter. You confirm the plan on the phone before anything runs. Only names are shared with the
+server; folder paths and program locations never leave this PC, and a folder or program that is not in
+these lists can never be opened from the phone.
+
 ### What this PC can do
 
 On connect the agent tells the backend which actions it can run, and only those are planned
 for it: open/type/press keys/click/wait/screenshot always, **scroll** if `pyautogui` is
 installed, and **browser navigation** if `playwright` is installed (it drives your installed
 Edge or Chrome in a fresh window; nothing is downloaded and downloads are blocked). The
-browser also needs "Allow web browsing" switched on for this PC in the app.
+window is left open after the task, like Notepad. The browser also needs "Allow web browsing"
+switched on for this PC in the app.
 
 ### Staying connected and stopping
 

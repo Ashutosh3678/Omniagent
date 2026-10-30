@@ -13,6 +13,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -35,6 +36,47 @@ class DriverUnavailable(Exception):
 
 # --------------------------------------------------------------------------- Notepad
 _CLICKABLE = {"Button", "MenuItem", "TabItem", "CheckBox", "RadioButton", "Hyperlink", "ListItem", "TreeItem", "SplitButton"}
+
+
+def click_best_match(window: Any, target: str, where: str) -> Result:
+    """Clicks the control in `window` whose label best matches `target` (local embeddings, no model)."""
+    try:
+        window.set_focus()
+        best_score, best = 0.0, None
+        for control in window.descendants():
+            label = (control.window_text() or "").strip()
+            if not label or len(label) > 80:
+                continue
+            try:
+                kind = control.element_info.control_type
+            except Exception:  # noqa: BLE001 - the win32 backend has no control types
+                kind = None
+            if kind is not None and kind not in _CLICKABLE:
+                continue
+            score = similarity(target, label)
+            if score > best_score:
+                best_score, best = score, (control, label)
+        if best is None or best_score < VERIFY_THRESHOLD:
+            return Result(False, f"Could not find {target!r} in {where}", retry=True)
+        best[0].click_input()
+        return Result(True, f"Clicked {best[1]!r}")
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Click failed")
+        return Result(False, str(exc))
+
+
+def scroll_window(window: Any, direction: str, amount: int) -> Result:
+    try:
+        import pyautogui
+
+        window.set_focus()
+        rect = window.rectangle()
+        pyautogui.moveTo((rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2)
+        pyautogui.scroll(amount if direction == "up" else -amount)
+        return Result(True, f"Scrolled {direction} {amount}")
+    except Exception as exc:  # noqa: BLE001 - includes pyautogui's corner failsafe
+        logger.exception("Scroll failed")
+        return Result(False, str(exc))
 
 
 class NotepadDriver:
@@ -97,47 +139,229 @@ class NotepadDriver:
 
     def click(self, target: str) -> Result:
         """Clicks the control in the Notepad window whose label best matches `target`."""
-        try:
-            window = self.session.spec()
-            window.set_focus()
-            best_score, best = 0.0, None
-            for control in window.descendants():
-                label = (control.window_text() or "").strip()
-                if not label or len(label) > 80:
-                    continue
-                try:
-                    kind = control.element_info.control_type
-                except Exception:  # noqa: BLE001 - the win32 backend has no control types
-                    kind = None
-                if kind is not None and kind not in _CLICKABLE:
-                    continue
-                score = similarity(target, label)
-                if score > best_score:
-                    best_score, best = score, (control, label)
-            if best is None or best_score < VERIFY_THRESHOLD:
-                return Result(False, f"Could not find {target!r} in Notepad", retry=True)
-            best[0].click_input()
-            return Result(True, f"Clicked {best[1]!r}")
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("Click failed")
-            return Result(False, str(exc))
+        return click_best_match(self.session.spec(), target, "Notepad")
 
     def scroll(self, direction: str, amount: int) -> Result:
-        try:
-            import pyautogui
-
-            window = self.session.spec()
-            window.set_focus()
-            rect = window.rectangle()
-            pyautogui.moveTo((rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2)
-            pyautogui.scroll(amount if direction == "up" else -amount)
-            return Result(True, f"Scrolled {direction} {amount}")
-        except Exception as exc:  # noqa: BLE001 - includes pyautogui's corner failsafe
-            logger.exception("Scroll failed")
-            return Result(False, str(exc))
+        return scroll_window(self.session.spec(), direction, amount)
 
     def close(self) -> None:  # the user keeps the window they asked for
         return None
+
+
+# --------------------------------------------------------------------------- any other window
+# Windows' key names for the keys the backend allows (same table the Notepad driver uses).
+_SENDKEYS = {
+    "enter": "{ENTER}", "tab": "{TAB}", "escape": "{ESC}", "backspace": "{BACKSPACE}", "delete": "{DELETE}",
+    "up": "{UP}", "down": "{DOWN}", "left": "{LEFT}", "right": "{RIGHT}", "home": "{HOME}", "end": "{END}",
+    "pageup": "{PGUP}", "pagedown": "{PGDN}",
+}  # fmt: skip
+_CONSOLE_CLASSES = frozenset({"ConsoleWindowClass", "CASCADIA_HOSTING_WINDOW_CLASS"})
+
+
+def escape_send_keys(text: str) -> str:
+    """Escapes the characters pywinauto treats as keyboard modifiers."""
+    return "".join("{" + char + "}" if char in "+^%~{}()" else char for char in text)
+
+
+def visible_windows() -> dict[int, tuple[str, str]]:
+    """Every visible top-level window: handle -> (title, class name)."""
+    from pywinauto import Desktop
+
+    found: dict[int, tuple[str, str]] = {}
+    try:
+        for window in Desktop(backend="uia").windows():
+            try:
+                if window.is_visible():
+                    found[int(window.handle)] = (window.window_text() or "", window.class_name() or "")
+            except Exception:  # noqa: BLE001 - windows come and go while we look
+                continue
+    except Exception:  # noqa: BLE001
+        logger.debug("Could not list windows", exc_info=True)
+    return found
+
+
+def choose_window(
+    candidates: dict[int, tuple[str, str]],
+    hint: str | None = None,
+    classes: frozenset[str] | None = None,
+) -> int | None:
+    """Picks the window that is most likely the app we just started. Pure, so it can be tested."""
+    usable = {
+        handle: (title, cls)
+        for handle, (title, cls) in candidates.items()
+        if (title.strip() or (classes and cls in classes)) and (classes is None or cls in classes)
+    }
+    if hint:
+        wanted = hint.lower()
+        for handle, (title, _cls) in usable.items():
+            if wanted in title.lower():
+                return handle
+        return None
+    return next(iter(usable), None)
+
+
+def wait_for_window(
+    before: dict[int, tuple[str, str]],
+    hint: str | None,
+    classes: frozenset[str] | None,
+    timeout: float,
+    snapshot: Any = None,
+    sleep: Any = time.sleep,
+    clock: Any = time.monotonic,
+) -> int | None:
+    """Waits for a new window to appear after starting a program.
+
+    Single-instance apps (Calculator) may just bring their existing window forward, so near the end
+    an already-open window that matches the title hint is accepted too."""
+    snapshot = snapshot or visible_windows
+    start = clock()
+    while True:
+        elapsed = clock() - start
+        current = snapshot()
+        fresh = {h: v for h, v in current.items() if h not in before}
+        found = choose_window(fresh, hint, classes)
+        if found is None and hint and elapsed >= timeout * 0.5:
+            found = choose_window(current, hint, classes)
+        if found is not None:
+            return found
+        if elapsed >= timeout:
+            return None
+        sleep(0.4)
+
+
+class WindowDriver:
+    """Drives any ordinary desktop window (Paint, Calculator, programs the owner added)."""
+
+    name = "window"
+    # Typed text may not show up as text on screen (a calculator, a drawing program), so typing is not
+    # checked against the screen the way it is for Notepad.
+    verifies_typing = False
+
+    def __init__(self, handle: int, label: str) -> None:
+        self.handle = handle
+        self.label = label
+
+    @classmethod
+    def open(
+        cls,
+        command: list[str],
+        label: str,
+        *,
+        title_hint: str | None = None,
+        classes: frozenset[str] | None = None,
+        cwd: str | None = None,
+        new_console: bool = False,
+        timeout: float = 20.0,
+    ) -> tuple[WindowDriver | None, Result]:
+        import subprocess
+
+        before = visible_windows()
+        try:
+            if new_console:
+                subprocess.Popen(command, cwd=cwd, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            else:
+                subprocess.Popen(command, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as exc:
+            return None, Result(False, f"Could not start {label}: {exc}")
+
+        handle = wait_for_window(before, title_hint, classes, timeout)
+        if handle is None:
+            return None, Result(False, f"{label} was started but its window did not appear")
+        driver = cls(handle, label)
+        try:
+            driver._spec().set_focus()
+        except Exception:  # noqa: BLE001 - it is open; focus will be set again before every action
+            logger.debug("Could not focus %s", label, exc_info=True)
+        return driver, Result(True, f"Opened {label}")
+
+    def _spec(self) -> Any:
+        from pywinauto import Desktop
+
+        return Desktop(backend="uia").window(handle=self.handle)
+
+    def _focused(self) -> Any:
+        spec = self._spec()
+        spec.set_focus()
+        time.sleep(0.3)
+        return spec
+
+    def observe_text(self) -> str:
+        parts: list[str] = []
+        try:
+            spec = self._spec()
+            parts.append(spec.window_text() or "")
+            for control in spec.descendants()[:300]:
+                text = (control.window_text() or "").strip()
+                if text and len(text) < 200:
+                    parts.append(text)
+        except Exception:  # noqa: BLE001
+            logger.debug("Could not read %s", self.label, exc_info=True)
+        return "\n".join(parts)
+
+    def _typed(self, text: str) -> str:
+        return text
+
+    def type_text(self, text: str) -> Result:
+        try:
+            self._focused().type_keys(escape_send_keys(self._typed(text)), with_spaces=True, with_newlines=True, pause=0.02)
+            return Result(True, f"Typed {text!r}")
+        except Exception as exc:  # noqa: BLE001 - some keys may already have gone in, so never repeat this
+            logger.exception("Typing failed")
+            return Result(False, str(exc).splitlines()[0] if str(exc) else "Typing failed")
+
+    def press_key(self, key: str, modifiers: list[str]) -> Result:
+        name = _SENDKEYS.get(key, key if len(key) == 1 else None)
+        if name is None:
+            return Result(False, f"Key {key!r} is not supported")
+        prefix = ("^" if "ctrl" in modifiers else "") + ("+" if "shift" in modifiers else "")
+        try:
+            self._focused().type_keys(prefix + name, pause=0.02)
+            return Result(True, f"Pressed {prefix}{name}")
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Key press failed")
+            return Result(False, str(exc).splitlines()[0] if str(exc) else "Key press failed")
+
+    def click(self, target: str) -> Result:
+        return click_best_match(self._spec(), target, self.label)
+
+    def scroll(self, direction: str, amount: int) -> Result:
+        return scroll_window(self._spec(), direction, amount)
+
+    def close(self) -> None:  # the user keeps the window they asked for
+        return None
+
+
+class ClaudeCodeDriver(WindowDriver):
+    """Claude Code in a terminal window, started inside a folder the owner chose on this PC.
+
+    Claude Code is started exactly as `claude` would be, so its own permission questions still appear;
+    nothing here switches those off. What is typed goes to Claude Code's prompt, not to a shell."""
+
+    name = "claude_code"
+
+    @classmethod
+    def start(cls, folder: Path) -> tuple[ClaudeCodeDriver | None, Result]:
+        import shutil
+
+        if shutil.which("claude") is None:
+            return None, Result(False, "Claude Code is not installed on this PC (the 'claude' command was not found)")
+        if not folder.is_dir():
+            return None, Result(False, f"The folder {folder} no longer exists")
+        driver, result = cls.open(
+            ["cmd.exe", "/k", "claude"],
+            "Claude Code",
+            classes=_CONSOLE_CLASSES,
+            cwd=str(folder),
+            new_console=True,
+            timeout=25.0,
+        )
+        if driver is not None:
+            result = Result(True, f"Opened Claude Code in {folder.name}")
+        return driver, result
+
+    def _typed(self, text: str) -> str:
+        # Enter sends the prompt in Claude Code, so a pasted line break must not become an Enter.
+        return " ".join(text.split())
 
 
 # --------------------------------------------------------------------------- Browser
@@ -165,11 +389,18 @@ def page_host(url: str) -> str:
     return (urlsplit(url).hostname or "").removeprefix("www.")
 
 
+# Playwright shuts the window if these objects are collected or stopped after the task
+# thread returns. Keep them for the life of this process so the page stays on screen,
+# the same way Notepad is left open.
+_open_browsers: list[BrowserDriver] = []
+
+
 class BrowserDriver:
     name = "browser"
 
     def __init__(self, playwright: Any, browser: Any, page: Any) -> None:
         self._playwright, self._browser, self.page = playwright, browser, page
+        _open_browsers.append(self)
 
     @classmethod
     def open(cls) -> BrowserDriver:
@@ -258,8 +489,7 @@ class BrowserDriver:
             return Result(False, str(exc).splitlines()[0])
 
     def close(self) -> None:
-        for closer in (self._browser.close, self._playwright.stop):
-            try:
-                closer()
-            except Exception:  # noqa: BLE001
-                logger.debug("Browser cleanup failed", exc_info=True)
+        """Leave the window on screen after the task. Playwright is kept alive so it
+        does not tear the process down when this task's RunContext is discarded."""
+        if self not in _open_browsers:
+            _open_browsers.append(self)

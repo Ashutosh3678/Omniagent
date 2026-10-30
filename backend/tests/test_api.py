@@ -373,13 +373,13 @@ def _connected(client: TestClient, user: dict):
     return agent_id, _ws(client, agent_id, device)
 
 
-def test_new_device_defaults_to_notepad_only() -> None:
+def test_new_device_may_use_only_the_harmless_apps() -> None:
     with TestClient(app) as client:
         user = _signup(client)
         _register(client, user)
         agent = client.get("/api/v1/agents", headers=user).json()[0]
         assert agent["status"] == "active"
-        assert agent["permitted_apps"] == ["notepad"]
+        assert agent["permitted_apps"] == ["notepad", "paint", "calculator"]
 
 
 def test_dispatch_denied_when_app_not_permitted() -> None:
@@ -619,11 +619,20 @@ class FakePlanner:
         self.error = error
         self.calls: list[tuple[str, list[str]]] = []
 
-    async def plan(self, instruction: str, permitted_apps: list[str], actions: list[str] | None = None):
+    async def plan(
+        self,
+        instruction: str,
+        permitted_apps: list[str],
+        actions: list[str] | None = None,
+        apps: list[dict] | None = None,
+        workspaces: list[str] | None = None,
+    ):
         from app.planner import PlannerResult
 
         self.calls.append((instruction, list(permitted_apps)))
         self.actions = actions
+        self.apps = apps
+        self.workspaces = workspaces
         if self.error:
             raise self.error
         return PlannerResult(steps=self.steps, planner="groq", note=self.note)

@@ -96,7 +96,7 @@ def update_agent(
         agent.name = body.name.strip()
         changes.append("name")
     if body.permitted_apps is not None:
-        unknown = set(body.permitted_apps) - KNOWN_APPS
+        unknown = set(body.permitted_apps) - (KNOWN_APPS | agent.available_app_ids)
         if unknown:
             raise HTTPException(422, f"Unknown apps: {sorted(unknown)}")
         agent.permitted_apps = sorted(set(body.permitted_apps))

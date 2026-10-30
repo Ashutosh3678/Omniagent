@@ -18,6 +18,8 @@ from app.schema import (
     KNOWN_APPS,
     NEEDS_OPEN_APP,
     OpenApp,
+    WORKSPACE_APPS,
+    app_label,
     action_adapter,
     describe,
 )
@@ -38,7 +40,11 @@ def validate_plan(
     raw_steps: list[Any],
     permitted_apps: list[str],
     executable: frozenset[str] | set[str] | None = None,
+    available_apps: frozenset[str] | set[str] | None = None,
+    workspaces: frozenset[str] | set[str] | None = None,
 ) -> PlanVerdict:
+    """`available_apps` and `workspaces` are what the PC's agent reported; None means "not told"
+    (only the built-in apps, and no folders)."""
     can_run = EXECUTABLE_ACTIONS if executable is None else executable
     steps: list[PlanStep] = []
     held: list[HeldBack] = []
@@ -53,7 +59,7 @@ def validate_plan(
             held.append(HeldBack(index=index, raw=raw_dict, reason="blocked_by_earlier_step", detail=f"Step {blocked_by + 1} was held back"))
             continue
 
-        reason, detail, step = _check(index, raw, raw_action, permitted_apps, can_run, current_app, len(steps))
+        reason, detail, step = _check(index, raw, raw_action, permitted_apps, can_run, current_app, len(steps), available_apps, workspaces)
         if step is None:
             blocked_by = index
             held.append(HeldBack(index=index, raw=raw_dict, reason=reason, detail=detail))
@@ -76,6 +82,8 @@ def _check(
     can_run: frozenset[str] | set[str],
     current_app: str | None,
     accepted_so_far: int,
+    available_apps: frozenset[str] | set[str] | None = None,
+    workspaces: frozenset[str] | set[str] | None = None,
 ) -> tuple[str, str, PlanStep | None]:
     if accepted_so_far >= MAX_STEPS:
         return "plan_too_long", f"Plans are limited to {MAX_STEPS} steps", None
@@ -100,10 +108,18 @@ def _check(
         return "not_supported", f"{action.type} is not available on this PC", None
 
     if isinstance(action, OpenApp):
-        if action.app not in KNOWN_APPS:
-            return "unknown_app", f"{action.app} is not a supported app", None
+        label = app_label(action.app)
+        if action.app not in (KNOWN_APPS if available_apps is None else available_apps):
+            return "unknown_app", f"{label} is not set up on this PC", None
         if action.app not in permitted_apps:
-            return "app_not_permitted", f"This PC is not allowed to use {action.app}", None
+            return "app_not_permitted", f"{label} is turned off for this PC. Turn it on in Devices.", None
+        if action.app in WORKSPACE_APPS:
+            if not action.workspace:
+                return "invalid_parameters", f"workspace: choose which folder to open {label} in", None
+            if action.workspace not in (workspaces or ()):
+                return "unknown_workspace", f"No folder called {action.workspace!r} is set up on this PC", None
+        elif action.workspace:
+            return "invalid_parameters", f"workspace: {label} does not take a folder", None
     elif action.type == "browser_navigate":
         if "browser" not in permitted_apps:
             return "app_not_permitted", "This PC is not allowed to use the browser", None
@@ -112,7 +128,7 @@ def _check(
 
     step = PlanStep(
         index=index,
-        action=action.model_dump(mode="json"),
+        action=action.model_dump(mode="json", exclude_none=True),
         description=describe(action),
         confidence=float(confidence),
     )

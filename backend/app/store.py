@@ -12,7 +12,8 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.db import Base, get_engine, session_scope
-from app.models import Agent, AgentPublic, AuditEvent, Task, TaskPublic, User, utcnow
+from app.models import Agent, AgentPublic, AppInfo, AuditEvent, Task, TaskPublic, User, utcnow
+from app.schema import DEFAULT_PERMITTED_APPS
 from app.orm import AgentRow, AuditRow, PairingCodeRow, ScreenshotRow, StepScreenshotRow, TaskRow, UserRow
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,8 @@ def _agent(row: AgentRow) -> Agent:
         expires_at=_aware(row.expires_at),
         revoked_at=_aware(row.revoked_at),
         capabilities=list(row.capabilities) if row.capabilities is not None else None,
+        apps=[AppInfo(**app) for app in row.apps] if row.apps is not None else None,
+        workspaces=list(row.workspaces) if row.workspaces is not None else None,
     )
 
 
@@ -255,12 +258,33 @@ class Store:
             row.revoked_at = agent.revoked_at
         self._emit_agent(agent.id)
 
-    def set_capabilities(self, agent_id: str, actions: list[str]) -> None:
+    def set_capabilities(
+        self,
+        agent_id: str,
+        actions: list[str],
+        apps: list[dict] | None = None,
+        workspaces: list[str] | None = None,
+    ) -> list[str]:
+        """Stores what the PC says it can do. Returns the apps switched on by default the first time it
+        reports its apps (same harmless set a brand-new PC gets); nothing else is ever turned on here."""
+        granted: list[str] = []
         with session_scope() as db:
             row = db.get(AgentRow, agent_id)
-            if row is not None:
-                row.capabilities = sorted(set(actions))
+            if row is None:
+                return granted
+            row.capabilities = sorted(set(actions))
+            if apps is not None:
+                first_report = row.apps is None
+                row.apps = apps
+                if first_report:
+                    offered = {app["id"] for app in apps}
+                    current = list(row.permitted_apps or [])
+                    granted = [a for a in DEFAULT_PERMITTED_APPS if a in offered and a not in current]
+                    row.permitted_apps = current + granted
+            if workspaces is not None:
+                row.workspaces = workspaces
         self._emit_agent(agent_id)
+        return granted
 
     def get_agent_token_hash(self, agent_id: str) -> str | None:
         with session_scope() as db:

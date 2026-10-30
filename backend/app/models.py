@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from app.schema import EXECUTABLE_ACTIONS, LEGACY_ACTIONS
+from app.schema import DEFAULT_PERMITTED_APPS, EXECUTABLE_ACTIONS, LEGACY_ACTIONS, LEGACY_APPS, app_label
 
 TaskStatus = Literal["pending", "running", "completed", "partial", "failed"]
 
@@ -96,6 +96,14 @@ class TokenResponse(BaseModel):
 AgentStatus = Literal["active", "revoked"]
 
 
+class AppInfo(BaseModel):
+    """An app a PC can open, as its agent reported it."""
+
+    id: str
+    label: str
+    needs_workspace: bool = False
+
+
 class Agent(BaseModel):
     id: str
     user_id: str | None = None
@@ -104,11 +112,28 @@ class Agent(BaseModel):
     online: bool = False
     connected_at: datetime | None = None
     status: AgentStatus = "active"
-    permitted_apps: list[str] = Field(default_factory=lambda: ["notepad"])
+    permitted_apps: list[str] = Field(default_factory=lambda: list(DEFAULT_PERMITTED_APPS))
     expires_at: datetime | None = None
     revoked_at: datetime | None = None
     # Actions the PC's agent says it can run; None until it reports (older agents).
     capabilities: list[str] | None = None
+    # Apps and folders the PC's owner set up on the PC; None until the agent reports (older agents).
+    apps: list[AppInfo] | None = None
+    workspaces: list[str] | None = None
+
+    @property
+    def app_infos(self) -> list[AppInfo]:
+        if self.apps is None:
+            return [AppInfo(id=app, label=app_label(app)) for app in sorted(LEGACY_APPS)]
+        return self.apps
+
+    @property
+    def available_app_ids(self) -> frozenset[str]:
+        return frozenset(app.id for app in self.app_infos)
+
+    @property
+    def workspace_names(self) -> frozenset[str]:
+        return frozenset(self.workspaces or [])
 
     @property
     def executable_actions(self) -> frozenset[str]:
@@ -260,6 +285,8 @@ class AgentPublic(BaseModel):
     permitted_apps: list[str] = Field(default_factory=list)
     expires_at: datetime | None = None
     actions: list[str] = Field(default_factory=list)
+    apps: list[AppInfo] = Field(default_factory=list)
+    workspaces: list[str] = Field(default_factory=list)
 
     @classmethod
     def from_agent(cls, agent: Agent) -> AgentPublic:
@@ -272,6 +299,8 @@ class AgentPublic(BaseModel):
             permitted_apps=agent.permitted_apps,
             expires_at=agent.expires_at,
             actions=sorted(agent.executable_actions),
+            apps=agent.app_infos,
+            workspaces=sorted(agent.workspace_names),
         )
 
 

@@ -13,6 +13,9 @@ _NOTEPAD = re.compile(
 )
 
 
+_SIMPLE_APP = re.compile(r"^\s*open\s+(?:ms\s*)?(paint|calculator|calc)\s*$", re.IGNORECASE)
+
+
 class InvalidActionError(ValueError):
     pass
 
@@ -26,6 +29,11 @@ def plan_from_instruction(instruction: str) -> list[dict[str, Any]]:
     if not text:
         raise InvalidActionError("Instruction is empty")
 
+    simple = _SIMPLE_APP.match(text)
+    if simple:
+        app = "calculator" if simple.group(1).lower() in ("calc", "calculator") else "paint"
+        return [{"action": {"type": "open_app", "app": app}, "confidence": 1.0}]
+
     match = _NOTEPAD.match(text)
     if match:
         steps: list[dict[str, Any]] = [{"action": {"type": "open_app", "app": "notepad"}, "confidence": 1.0}]
@@ -34,4 +42,4 @@ def plan_from_instruction(instruction: str) -> list[dict[str, Any]]:
             steps.append({"action": {"type": "type_text", "text": message}, "confidence": 1.0})
         return steps
 
-    raise InvalidActionError("Unsupported instruction. Allowed: Open Notepad and type <message>")
+    raise InvalidActionError("Unsupported instruction. Allowed: Open Notepad and type <message>, Open Paint, Open Calculator")

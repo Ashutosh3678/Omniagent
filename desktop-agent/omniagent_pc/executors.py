@@ -8,7 +8,16 @@ import time
 from pathlib import Path
 from typing import Any
 
-from omniagent_pc.drivers import BrowserDriver, DriverUnavailable, NotepadDriver, Result, page_host
+from omniagent_pc import apps
+from omniagent_pc.drivers import (
+    BrowserDriver,
+    ClaudeCodeDriver,
+    DriverUnavailable,
+    NotepadDriver,
+    Result,
+    WindowDriver,
+    page_host,
+)
 from omniagent_pc.plan_runner import Executor, RunContext, StepOutcome
 
 
@@ -22,32 +31,54 @@ def _need_app(ctx: RunContext) -> StepOutcome | None:
 
 def _open_browser(ctx: RunContext) -> BrowserDriver:
     driver = BrowserDriver.open()
+    # close() keeps the window; it is still registered so cleanup always retains Playwright.
     ctx.cleanups.append(driver.close)
     ctx.driver = driver
     return driver
 
 
 def open_app(action: dict[str, Any], ctx: RunContext) -> StepOutcome:
+    """Opens an app the owner has set up on this PC. The app list and folders are re-read from the
+    PC's own settings now, so what was true when the agent connected is not simply trusted."""
     app = action.get("app")
-    if app == "notepad":
+    config = apps.load_config()
+    spec = apps.app_specs(config).get(str(app))
+    if spec is None:
+        return StepOutcome(False, f"{app!r} is not set up on this PC")
+
+    if spec.kind == "notepad":
         driver, result = NotepadDriver.open()
         if driver is not None:
             ctx.driver = driver
         return _outcome(result, expected="notepad")  # the window title says so
-    if app == "browser":
+    if spec.kind == "browser":
         try:
             _open_browser(ctx)
         except DriverUnavailable as exc:
             return StepOutcome(False, str(exc))
         return StepOutcome(True, "Opened the browser")
-    return StepOutcome(False, f"Cannot open {app!r}")
+    if spec.kind == "claude_code":
+        name = str(action.get("workspace") or "")
+        folder = apps.folder_paths(config).get(name)
+        if folder is None:
+            return StepOutcome(False, f"No folder called {name!r} is set up on this PC")
+        driver, result = ClaudeCodeDriver.start(folder)
+        if driver is not None:
+            ctx.driver = driver
+        return _outcome(result)  # a terminal's text cannot be read back, so there is nothing to compare
+    driver, result = WindowDriver.open([spec.exe], spec.label, title_hint=spec.title_hint)
+    if driver is not None:
+        ctx.driver = driver
+    return _outcome(result)
 
 
 def type_text(action: dict[str, Any], ctx: RunContext) -> StepOutcome:
     if (missing := _need_app(ctx)) is not None:
         return missing
     text = str(action.get("text", ""))
-    return _outcome(ctx.driver.type_text(text), expected=text)
+    # Only drivers that can read their window back (Notepad, the browser) have typing checked on screen.
+    expected = text if getattr(ctx.driver, "verifies_typing", True) else None
+    return _outcome(ctx.driver.type_text(text), expected=expected)
 
 
 def press_key(action: dict[str, Any], ctx: RunContext) -> StepOutcome:

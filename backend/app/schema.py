@@ -21,7 +21,11 @@ class _Action(BaseModel):
 
 class OpenApp(_Action):
     type: Literal["open_app"]
-    app: str = Field(min_length=1, max_length=32)
+    # An app id the PC's agent reported (see Agent.available_app_ids), such as "paint" or "claude_code".
+    app: str = Field(pattern=r"^[a-z0-9_]{1,32}$")
+    # For apps that work inside a folder (Claude Code): the NAME of a folder the PC's owner added on the PC.
+    # Never a path: the cloud cannot point the agent at a location of its own choosing.
+    workspace: str | None = Field(default=None, pattern=r"^[A-Za-z0-9 _.\-]{1,80}$")
 
 
 class TypeText(_Action):
@@ -113,14 +117,32 @@ EXECUTABLE_ACTIONS = ACTION_TYPES
 LEGACY_ACTIONS = frozenset({"open_app", "type_text", "press_key", "wait", "screenshot"})
 # Actions that act inside an app, so an app must have been opened earlier in the plan.
 NEEDS_OPEN_APP = frozenset({"type_text", "press_key", "click", "scroll"})
-KNOWN_APPS = frozenset({"notepad", "browser"})
+# Apps every PC agent knows how to run. A PC can also have programs its owner added (ids reported by the agent).
+APP_LABELS = {
+    "notepad": "Notepad",
+    "paint": "Paint",
+    "calculator": "Calculator",
+    "browser": "Web browser",
+    "claude_code": "Claude Code",
+}
+KNOWN_APPS = frozenset(APP_LABELS)
+# Apps that need a folder chosen from the PC's own list.
+WORKSPACE_APPS = frozenset({"claude_code"})
+# Harmless apps a new PC may use from the start. Everything else is off until the user turns it on.
+DEFAULT_PERMITTED_APPS = ("notepad", "paint", "calculator")
+# What agents from before app reporting could open.
+LEGACY_APPS = frozenset({"notepad", "browser"})
+
+
+def app_label(app_id: str) -> str:
+    return APP_LABELS.get(app_id, app_id.replace("_", " ").title())
 
 
 def describe(action: _Action) -> str:
     """A short plain-language label for the step, shown in the app."""
     match action:
-        case OpenApp(app=app):
-            return f"Open {app.capitalize()}"
+        case OpenApp(app=app, workspace=workspace):
+            return f"Open {app_label(app)}" + (f" in {workspace}" if workspace else "")
         case TypeText(text=text):
             shown = text if len(text) <= 40 else text[:37] + "..."
             return f"Type “{shown}”"

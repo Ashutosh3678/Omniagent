@@ -16,9 +16,10 @@ import threading
 import tkinter as tk
 import urllib.error
 from datetime import datetime
-from tkinter import messagebox, scrolledtext, ttk
+from pathlib import Path
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 
-from omniagent_pc import client
+from omniagent_pc import apps, client
 
 logger = logging.getLogger(__name__)
 
@@ -50,12 +51,15 @@ class AgentWindow:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.task: asyncio.Task | None = None
         self._executors_summary = ""
+        self._reconnect_after_stop = False
+        self.config = apps.load_config()
 
         root.title("OmniAgent")
-        root.minsize(520, 560)
+        root.minsize(540, 720)
         root.protocol("WM_DELETE_WINDOW", self.close)
         self._build()
         self._show_abilities()
+        self._refresh_lists()
         self._refresh_pairing_hint()
         root.after(POLL_MS, self._drain)
         if client.load_credentials(self.api.get().strip()):
@@ -108,9 +112,24 @@ class AgentWindow:
         self.abilities = ttk.Label(frame, text="", foreground="#4b5563", wraplength=460, justify="left")
         self.abilities.grid(row=8, column=0, columnspan=2, sticky="w")
 
-        self.log = scrolledtext.ScrolledText(frame, height=12, state="disabled", font=("Consolas", 9), wrap="word")
-        self.log.grid(row=9, column=0, columnspan=2, sticky="nsew", pady=(10, 6))
-        frame.rowconfigure(9, weight=1)
+        lists = ttk.Frame(frame)
+        lists.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        lists.columnconfigure(0, weight=1)
+        lists.columnconfigure(1, weight=1)
+        self.folder_list = self._list_box(lists, 0, "Folders your phone may use (for Claude Code)", "Add folder…", self.add_folder, self.remove_folder)
+        self.program_list = self._list_box(lists, 1, "Extra programs your phone may open", "Add program…", self.add_program, self.remove_program)
+        ttk.Label(
+            frame,
+            text="Notepad, Paint and Calculator are built in. Your phone can only use what is listed here; "
+            "it never gets to pick a path of its own. Changes reconnect automatically.",
+            foreground="#6b7280",
+            wraplength=500,
+            justify="left",
+        ).grid(row=10, column=0, columnspan=2, sticky="w", pady=(2, 0))
+
+        self.log = scrolledtext.ScrolledText(frame, height=8, state="disabled", font=("Consolas", 9), wrap="word")
+        self.log.grid(row=11, column=0, columnspan=2, sticky="nsew", pady=(10, 6))
+        frame.rowconfigure(11, weight=1)
 
         ttk.Label(
             frame,
@@ -119,7 +138,18 @@ class AgentWindow:
             foreground="#6b7280",
             wraplength=480,
             justify="left",
-        ).grid(row=10, column=0, columnspan=2, sticky="w")
+        ).grid(row=12, column=0, columnspan=2, sticky="w")
+
+    def _list_box(self, parent: ttk.Frame, column: int, title: str, add_text: str, add_cmd, remove_cmd) -> tk.Listbox:
+        box = ttk.LabelFrame(parent, text=title, padding=6)
+        box.grid(row=0, column=column, sticky="nsew", padx=(0 if column == 0 else 6, 6 if column == 0 else 0))
+        listbox = tk.Listbox(box, height=4, exportselection=False, font=("Segoe UI", 9))
+        listbox.pack(fill="both", expand=True)
+        row = ttk.Frame(box)
+        row.pack(fill="x", pady=(4, 0))
+        ttk.Button(row, text=add_text, command=add_cmd).pack(side="left")
+        ttk.Button(row, text="Remove", command=remove_cmd).pack(side="left", padx=6)
+        return listbox
 
     def _upper_code(self) -> None:
         value = self.code.get()
@@ -140,6 +170,13 @@ class AgentWindow:
         if "browser_navigate" not in actions:
             missing.append("web browsing (pip install playwright)")
         text = "This PC can: " + ", ".join(a.replace("_", " ") for a in actions) + "."
+        try:
+            labels = [spec.label for spec in apps.app_specs(self.config).values()]
+            text += " Apps: " + (", ".join(labels) or "none") + "."
+            if "claude_code" not in apps.app_specs(self.config):
+                text += " (Claude Code was not found: install it so the 'claude' command works.)"
+        except Exception:  # noqa: BLE001
+            pass
         if missing:
             text += " Not available: " + "; ".join(missing) + "."
         self.abilities.config(text=text)
@@ -204,6 +241,9 @@ class AgentWindow:
                     if self.status.cget("fg") != COLORS["bad"]:
                         self._set_status("Not connected", "idle")
                     self._refresh_pairing_hint()
+                    if self._reconnect_after_stop:
+                        self._reconnect_after_stop = False
+                        self.root.after(300, self.connect)
         except queue.Empty:
             pass
         self.root.after(POLL_MS, self._drain)
@@ -249,6 +289,64 @@ class AgentWindow:
         finally:
             loop.close()
             self.events.put(("stopped", ""))
+
+    # -- folders and programs the owner allows (kept on this PC, reported to the backend by name)
+    def _refresh_lists(self) -> None:
+        self.folder_list.delete(0, "end")
+        for name, path in self.config["folders"].items():
+            self.folder_list.insert("end", f"{name}  -  {path}")
+        self.program_list.delete(0, "end")
+        for program in self.config["programs"].values():
+            self.program_list.insert("end", f"{program['label']}  -  {program['path']}")
+
+    def _lists_changed(self, message: str) -> None:
+        apps.save_config(self.config)
+        self._refresh_lists()
+        self._show_abilities()
+        self._write(message)
+        if self.thread is not None:  # tell the backend about the new list by reconnecting
+            self._reconnect_after_stop = True
+            self.disconnect()
+
+    def add_folder(self) -> None:
+        path = filedialog.askdirectory(parent=self.root, title="Choose a folder your phone may open Claude Code in")
+        if not path:
+            return
+        try:
+            name = apps.add_folder(self.config, str(Path(path)))
+        except ValueError as exc:
+            messagebox.showwarning("OmniAgent", str(exc), parent=self.root)
+            return
+        self._lists_changed(f"Folder '{name}' added. Say its name to your phone (for example: open Claude Code in {name}).")
+
+    def remove_folder(self) -> None:
+        selected = self.folder_list.curselection()
+        if not selected:
+            return
+        name = list(self.config["folders"])[selected[0]]
+        del self.config["folders"][name]
+        self._lists_changed(f"Folder '{name}' removed.")
+
+    def add_program(self) -> None:
+        path = filedialog.askopenfilename(
+            parent=self.root, title="Choose a program your phone may open", filetypes=[("Programs", "*.exe")]
+        )
+        if not path:
+            return
+        try:
+            app_id = apps.add_program(self.config, str(Path(path)))
+        except ValueError as exc:
+            messagebox.showwarning("OmniAgent", str(exc), parent=self.root)
+            return
+        self._lists_changed(f"Program '{self.config['programs'][app_id]['label']}' added.")
+
+    def remove_program(self) -> None:
+        selected = self.program_list.curselection()
+        if not selected:
+            return
+        app_id = list(self.config["programs"])[selected[0]]
+        label = self.config["programs"].pop(app_id)["label"]
+        self._lists_changed(f"Program '{label}' removed.")
 
     def disconnect(self) -> None:
         loop, task = self.loop, self.task
