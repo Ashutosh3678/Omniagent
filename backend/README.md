@@ -108,6 +108,32 @@ flag flips and the app fetches the thumbnail. At most 5 connections per user (cl
 4429 beyond that); close code 4401 means the login is invalid or has expired. The REST
 endpoints stay as they were, for loading the first screen and for catching up after a reconnect.
 
+## Screenshots on a CDN (Cloudinary)
+
+With Cloudinary configured, the backend uploads each screenshot the PC sends (the final one and the
+per-step thumbnails) and the app loads them straight from the CDN, so images are fast on a phone and
+the database no longer stores them. Set these (environment or `backend/.env`; the values are on the
+Cloudinary dashboard):
+
+```
+OMNIAGENT_CLOUDINARY_CLOUD_NAME=your-cloud-name
+OMNIAGENT_CLOUDINARY_API_KEY=1234567890123456
+OMNIAGENT_CLOUDINARY_API_SECRET=your-api-secret
+```
+
+(or the standard `CLOUDINARY_URL=cloudinary://<api_key>:<api_secret>@<cloud_name>`).
+
+- **Private by default.** Images are uploaded as *authenticated* assets under
+  `omniagent/<user>/<task>/`. A plain URL does not work; only a URL signed with your API secret does,
+  and the backend signs one only for the task's owner. Anyone who has a signed URL can open it
+  (Cloudinary's free plan has no expiry on signed URLs), so treat the links like the screenshots.
+- **Upload happens on the backend**, never on the PC or the phone, so the secret stays on the server.
+- **If Cloudinary is missing or fails**, the screenshot is kept in the database exactly as before and
+  the app loads it through the API. `GET /tasks/{id}/screenshot` (and the per-step one) redirects to the
+  CDN when the image lives there.
+- Task and event payloads carry `screenshot_url` for the task and for each step: a CDN address, or a
+  backend path when the image is in the database.
+
 ## Dispatch rules
 
 A task is sent only if every check passes, and the first failure is refused and

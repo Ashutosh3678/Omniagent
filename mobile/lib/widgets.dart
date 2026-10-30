@@ -87,10 +87,14 @@ class TaskTile extends StatelessWidget {
 }
 
 class ScreenPreview extends StatelessWidget {
-  const ScreenPreview({super.key, this.height, this.bytes});
+  const ScreenPreview({super.key, this.height, this.bytes, this.url, this.headers = const {}});
 
   final double? height;
   final Uint8List? bytes;
+
+  /// A screenshot to load over the network (normally straight from the CDN).
+  final String? url;
+  final Map<String, String> headers;
 
   @override
   Widget build(BuildContext context) {
@@ -106,7 +110,18 @@ class ScreenPreview extends StatelessWidget {
       ),
       alignment: Alignment.topLeft,
       clipBehavior: Clip.antiAlias,
-      child: bytes != null
+      child: url != null
+          ? Image.network(
+              url!,
+              headers: headers,
+              fit: BoxFit.cover,
+              width: double.infinity,
+              height: height,
+              loadingBuilder: (context, child, progress) =>
+                  progress == null ? child : const Center(child: CircularProgressIndicator()),
+              errorBuilder: (context, error, stack) => const Center(child: Text('Screenshot unavailable')),
+            )
+          : bytes != null
           ? Image.memory(bytes!, fit: BoxFit.cover, width: double.infinity, height: height)
           : Container(
         width: 220,

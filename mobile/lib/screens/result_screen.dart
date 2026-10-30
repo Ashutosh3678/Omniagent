@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
@@ -15,19 +13,6 @@ class ResultScreen extends StatefulWidget {
 }
 
 class _ResultScreenState extends State<ResultScreen> {
-  Uint8List? _bytes;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final task = ModalRoute.of(context)?.settings.arguments;
-    if (task is TaskItem && task.id != null) {
-      omniApi.getScreenshot(task.id!).then((bytes) {
-        if (mounted) setState(() => _bytes = bytes);
-      }).catchError((_) {});
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final task = ModalRoute.of(context)?.settings.arguments as TaskItem? ?? kHistory.first;
@@ -57,7 +42,7 @@ class _ResultScreenState extends State<ResultScreen> {
                 ),
               ),
             const SizedBox(height: 16),
-            ScreenPreview(height: 160, bytes: _bytes),
+            ScreenPreview(height: 160, url: task.screenshotUrl, headers: omniApi.imageHeaders(task.screenshotUrl)),
             if (task.fileName != null)
               ListTile(
                 contentPadding: EdgeInsets.zero,

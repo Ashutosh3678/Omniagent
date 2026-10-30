@@ -56,6 +56,7 @@ class TaskRow(Base):
     logs: Mapped[list] = mapped_column(Json, default=list)
     steps: Mapped[list] = mapped_column(Json, default=list)
     screenshot_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    screenshot_ref: Mapped[str | None] = mapped_column(String(400), nullable=True)
     summary: Mapped[str] = mapped_column(Text, default="")
     error: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

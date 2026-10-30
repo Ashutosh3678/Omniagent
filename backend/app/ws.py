@@ -11,6 +11,8 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.auth import device_token_matches, token_from_header
 from app.config import STEP_TIMEOUT_SECONDS, TASK_TIMEOUT_SECONDS
+from app import cdn as cdn_module
+from app.cdn import CdnError
 from app.models import Task, utcnow
 from app.schema import ACTION_TYPES
 from app.store import store
@@ -20,6 +22,7 @@ router = APIRouter()
 
 _STEP_STATUSES = {"running", "success", "failed", "unverified", "skipped"}
 MAX_STEP_SCREENSHOT_BYTES = 1_500_000
+MAX_FINAL_SCREENSHOT_BYTES = 8_000_000
 _SCREENSHOT_TYPES = {"image/jpeg", "image/png"}
 
 
@@ -97,6 +100,50 @@ async def agent_socket(websocket: WebSocket, agent_id: str) -> None:
         await websocket.close()
 
 
+def _image_type(data: bytes) -> str | None:
+    if data.startswith(b"\x89PNG"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8"):
+        return "image/jpeg"
+    return None
+
+
+async def _upload(task: Task, data: bytes, content_type: str | None, name: str) -> str | None:
+    """Puts the image on the CDN. None means "keep it in the database instead" (no CDN, or it failed)."""
+    cdn = cdn_module.get_cdn()
+    if cdn is None or task.user_id is None or content_type is None:
+        return None
+    try:
+        return await cdn.upload(data, content_type, task.user_id, task.id, name)
+    except CdnError:
+        task.log("Screenshot kept locally: the CDN upload failed")
+        return None
+
+
+async def _keep_step_screenshot(task: Task, index: int, data: bytes, content_type: str) -> None:
+    ref = await _upload(task, data, content_type, f"step-{index}")
+    if ref is None:
+        store.save_step_screenshot(task.id, index, data, content_type)
+    task.steps[index].screenshot_ref = ref
+    task.steps[index].has_screenshot = True
+
+
+async def _keep_final_screenshot(task: Task, encoded: str) -> None:
+    try:
+        data = base64.b64decode(encoded, validate=True)
+    except ValueError:
+        task.log("Screenshot payload was invalid")
+        return
+    if not data or len(data) > MAX_FINAL_SCREENSHOT_BYTES:
+        task.log("Screenshot payload was invalid")
+        return
+    ref = await _upload(task, data, _image_type(data), "final")
+    if ref is None:
+        store.save_screenshot(task.id, data)
+    task.screenshot_ref = ref
+    task.screenshot_id = task.id
+
+
 def _decode_step_screenshot(message: dict[str, Any]) -> tuple[bytes, str] | None:
     encoded = message.get("screenshot_b64")
     if not isinstance(encoded, str) or not encoded:
@@ -144,8 +191,7 @@ async def _handle_agent_message(agent_id: str, message: dict[str, Any]) -> None:
             task.steps[index].detail = str(message.get("detail") or "")[:500]
             shot = _decode_step_screenshot(message)
             if shot is not None:
-                store.save_step_screenshot(task.id, index, shot[0], shot[1])
-                task.steps[index].has_screenshot = True
+                await _keep_step_screenshot(task, index, shot[0], shot[1])
             task.updated_at = utcnow()
             store.save_task(task)
         return
@@ -167,12 +213,8 @@ async def _handle_agent_message(agent_id: str, message: dict[str, Any]) -> None:
         task.summary = str(message.get("summary") or "")
         task.error = str(message.get("error") or "")
         screenshot_b64 = message.get("screenshot_b64")
-        if screenshot_b64:
-            try:
-                store.save_screenshot(task.id, base64.b64decode(screenshot_b64))
-                task.screenshot_id = task.id
-            except Exception:
-                task.log("Screenshot payload was invalid")
+        if isinstance(screenshot_b64, str) and screenshot_b64:
+            await _keep_final_screenshot(task, screenshot_b64)
         task.log("Agent reported " + task.status)
         store.save_task(task)
         return

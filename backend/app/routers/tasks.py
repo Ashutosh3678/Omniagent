@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.responses import RedirectResponse
 
+from app import cdn as cdn_module
 from app.auth import get_current_user
 from app.dispatch import authorize_device, authorize_plan, deny
 from app.models import CreateTaskRequest, HeldBack, Step, Task, TaskPublic, User
@@ -103,6 +105,12 @@ def get_task(task_id: str, user: User = Depends(get_current_user)) -> TaskPublic
 
 @router.get("/{task_id}/screenshot")
 def get_screenshot(task_id: str, user: User = Depends(get_current_user)) -> Response:
+    task = store.get_task(task_id, user.id)
+    if task is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Screenshot not found")
+    cdn = cdn_module.get_cdn()
+    if task.screenshot_ref and cdn is not None and (url := cdn.url(task.screenshot_ref, max_width=1080)):
+        return RedirectResponse(url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
     data = store.get_screenshot(task_id, user.id)
     if data is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Screenshot not found")
@@ -111,6 +119,11 @@ def get_screenshot(task_id: str, user: User = Depends(get_current_user)) -> Resp
 
 @router.get("/{task_id}/steps/{index}/screenshot")
 def get_step_screenshot(task_id: str, index: int, user: User = Depends(get_current_user)) -> Response:
+    task = store.get_task(task_id, user.id)
+    if task is not None and 0 <= index < len(task.steps) and task.steps[index].screenshot_ref:
+        cdn = cdn_module.get_cdn()
+        if cdn is not None and (url := cdn.url(task.steps[index].screenshot_ref)):
+            return RedirectResponse(url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
     found = store.get_step_screenshot(task_id, index, user.id)
     if found is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Screenshot not found")

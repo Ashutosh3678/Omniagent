@@ -31,6 +31,12 @@ class OmniApi {
         'Content-Type': 'application/json',
       };
 
+  /// Headers an image request needs. CDN addresses are signed and need none; only our own
+  /// backend's fallback addresses need the login.
+  Map<String, String> imageHeaders(String? url) => url != null && url.startsWith(_baseUrl) && _session.token != null
+      ? {'Authorization': 'Bearer ${_session.token}'}
+      : const {};
+
   Future<void> register(String email, String password, {String name = ''}) =>
       _authenticate('/api/v1/auth/register', {'email': email, 'password': password, 'name': name});
 

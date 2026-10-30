@@ -1,6 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 
 import '../api/client.dart';
@@ -17,7 +15,7 @@ class LiveScreen extends StatefulWidget {
 }
 
 class _LiveScreenState extends State<LiveScreen> {
-  Uint8List? _bytes;
+  String? _url;
   String _caption = '';
   Timer? _poll;
 
@@ -39,13 +37,7 @@ class _LiveScreenState extends State<LiveScreen> {
       _poll = Timer.periodic(const Duration(seconds: 5), (_) {
         if (!events.connected.value) _load();
       });
-      _live = events.tasks.where((task) => task.id == id).listen((task) {
-        final latest = task.steps.lastIndexWhere((step) => step.hasScreenshot);
-        final finished = task.status == TaskStatus.completed ||
-            task.status == TaskStatus.partial ||
-            task.status == TaskStatus.failed;
-        if (latest != _shown || finished) _load();
-      });
+      _live = events.tasks.where((task) => task.id == id).listen(_apply);
       _resync = events.resyncs.listen((_) => _load());
       _load();
     }
@@ -63,24 +55,22 @@ class _LiveScreenState extends State<LiveScreen> {
     final id = _task?.id;
     if (id == null) return;
     try {
-      // Newest step thumbnail first; the final full screenshot once the task has finished.
-      final latest = await omniApi.getTask(id);
-      final index = latest.steps.lastIndexWhere((step) => step.hasScreenshot);
-      Uint8List? bytes;
-      var caption = '';
-      if (index >= 0) {
-        bytes = await omniApi.getStepScreenshot(id, index);
-        caption = latest.steps[index].name;
-        _shown = index;
-      }
-      bytes ??= await omniApi.getScreenshot(id);
-      if (mounted && bytes != null) {
-        setState(() {
-          _bytes = bytes;
-          _caption = caption;
-        });
-      }
+      _apply(await omniApi.getTask(id));
     } catch (_) {}
+  }
+
+  /// Shows the newest step thumbnail, or the final screenshot once there is one. The addresses come
+  /// with the task, so no extra request is needed.
+  void _apply(TaskItem task) {
+    if (!mounted) return;
+    final index = task.steps.lastIndexWhere((step) => step.screenshotUrl != null);
+    final url = index >= 0 ? task.steps[index].screenshotUrl : task.screenshotUrl;
+    if (url == null || (url == _url && index == _shown)) return;
+    setState(() {
+      _url = url;
+      _caption = index >= 0 ? task.steps[index].name : '';
+      _shown = index;
+    });
   }
 
   @override
@@ -94,7 +84,7 @@ class _LiveScreenState extends State<LiveScreen> {
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
         child: Column(
           children: [
-            Expanded(child: ScreenPreview(bytes: _bytes)),
+            Expanded(child: ScreenPreview(url: _url, headers: omniApi.imageHeaders(_url))),
             if (_caption.isNotEmpty) ...[
               const SizedBox(height: 8),
               Text('After: $_caption', style: Theme.of(context).textTheme.bodySmall),

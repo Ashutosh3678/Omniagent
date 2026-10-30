@@ -28,6 +28,10 @@ class Step(BaseModel):
     status: Literal["pending", "running", "success", "failed", "unverified", "skipped", "held_back"] = "pending"
     detail: str = ""
     has_screenshot: bool = False
+    # Where the thumbnail is stored on the CDN (kept with the task), and the address the app should load
+    # (filled in only when the task is sent out, so a signed link is never saved).
+    screenshot_ref: str | None = None
+    screenshot_url: str | None = None
 
 
 class PlanStep(BaseModel):
@@ -132,6 +136,7 @@ class Task(BaseModel):
     logs: list[LogEntry] = Field(default_factory=list)
     steps: list[Step] = Field(default_factory=list)
     screenshot_id: str | None = None
+    screenshot_ref: str | None = None
     summary: str = ""
     error: str = ""
     created_at: datetime = Field(default_factory=utcnow)
@@ -212,16 +217,33 @@ class TaskPublic(BaseModel):
 
     @classmethod
     def from_task(cls, task: Task) -> TaskPublic:
+        from app.cdn import get_cdn  # imported here: the CDN module reads settings that models must not depend on
+
+        cdn = get_cdn()
+
+        def step_url(index: int, step: Step) -> str | None:
+            if step.screenshot_ref and cdn is not None:
+                return cdn.url(step.screenshot_ref)
+            if step.has_screenshot and not step.screenshot_ref:
+                return f"/api/v1/tasks/{task.id}/steps/{index}/screenshot"
+            return None
+
+        final_url = None
+        if task.screenshot_ref and cdn is not None:
+            final_url = cdn.url(task.screenshot_ref, max_width=1080)
+        elif task.screenshot_id:
+            final_url = f"/api/v1/tasks/{task.id}/screenshot"
+
         return cls(
             id=task.id,
             agent_id=task.agent_id,
             instruction=task.instruction,
             status=task.status,
             logs=task.logs,
-            steps=task.steps,
+            steps=[step.model_copy(update={"screenshot_url": step_url(i, step)}) for i, step in enumerate(task.steps)],
             held_back=task.held_back,
             confidence=task.confidence,
-            screenshot_url=f"/api/v1/tasks/{task.id}/screenshot" if task.screenshot_id else None,
+            screenshot_url=final_url,
             summary=task.summary,
             error=task.error,
             created_at=task.created_at,

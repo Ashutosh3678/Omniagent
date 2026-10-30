@@ -59,6 +59,21 @@ check_production(ENVIRONMENT, JWT_SECRET, DATABASE_URL)
 GROQ_API_KEY = (os.environ.get("OMNIAGENT_GROQ_API_KEY") or os.environ.get("GROQ_API_KEY") or "").strip()
 GROQ_MODEL = os.environ.get("OMNIAGENT_GROQ_MODEL", "openai/gpt-oss-20b")
 GROQ_TIMEOUT_SECONDS = float(os.environ.get("OMNIAGENT_GROQ_TIMEOUT", "25"))
+# Screenshots on Cloudinary's CDN. Needs all three (or the standard CLOUDINARY_URL=cloudinary://key:secret@cloud).
+def _cloudinary_settings() -> tuple[str, str, str]:
+    cloud = os.environ.get("OMNIAGENT_CLOUDINARY_CLOUD_NAME", "").strip()
+    key = os.environ.get("OMNIAGENT_CLOUDINARY_API_KEY", "").strip()
+    secret = os.environ.get("OMNIAGENT_CLOUDINARY_API_SECRET", "").strip()
+    url = os.environ.get("CLOUDINARY_URL", "").strip()
+    if url.startswith("cloudinary://") and "@" in url:
+        credentials, _, host = url.removeprefix("cloudinary://").rpartition("@")
+        url_key, _, url_secret = credentials.partition(":")
+        cloud, key, secret = cloud or host, key or url_key, secret or url_secret
+    return cloud, key, secret
+
+
+CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET = _cloudinary_settings()
+CLOUDINARY_FOLDER = os.environ.get("OMNIAGENT_CLOUDINARY_FOLDER", "omniagent")
 PLANS_PER_MINUTE = int(os.environ.get("OMNIAGENT_PLANS_PER_MINUTE", "20"))
 # Plans below this confidence are flagged in the preview so the user looks twice.
 LOW_CONFIDENCE = 0.6

@@ -1,12 +1,25 @@
 enum TaskStatus { pending, running, completed, partial, failed }
 
+/// Screenshots arrive as full CDN addresses, or as paths on the backend when the CDN is not in use.
+String? resolveUrl(String apiBase, String? value) {
+  if (value == null || value.isEmpty) return null;
+  return value.startsWith('http') ? value : '$apiBase$value';
+}
+
 class TaskStep {
-  const TaskStep({required this.name, required this.status, this.detail = '', this.hasScreenshot = false});
+  const TaskStep({
+    required this.name,
+    required this.status,
+    this.detail = '',
+    this.hasScreenshot = false,
+    this.screenshotUrl,
+  });
 
   final String name;
   final String status;
   final String detail;
   final bool hasScreenshot;
+  final String? screenshotUrl;
 
   /// A step that did something but could not be confirmed, or did not work.
   bool get hasProblem => status == 'failed' || status == 'unverified' || status == 'held_back';
@@ -54,8 +67,8 @@ class TaskItem {
         (value) => value.name == statusName,
         orElse: () => TaskStatus.pending,
       ),
-      fileName: screenshot?.split('/').last,
-      screenshotUrl: screenshot == null ? null : '$apiBase$screenshot',
+      fileName: screenshot?.split('?').first.split('/').last,
+      screenshotUrl: resolveUrl(apiBase, screenshot),
       summary: json['summary'] as String? ?? '',
       error: json['error'] as String? ?? '',
       steps: [
@@ -65,6 +78,7 @@ class TaskItem {
             status: step['status'] as String? ?? 'pending',
             detail: step['detail'] as String? ?? '',
             hasScreenshot: step['has_screenshot'] as bool? ?? false,
+            screenshotUrl: resolveUrl(apiBase, step['screenshot_url'] as String?),
           ),
       ],
     );
