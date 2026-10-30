@@ -1,7 +1,8 @@
 # OmniAgent Mobile
 
-Flutter UI for the eight OmniAgent screens. Mock data only — no backend,
-AI, or remote PC control.
+Flutter client for OmniAgent. It talks to the FastAPI backend over REST
+(`/api/v1`). Screens fall back to mock data when the backend returns nothing;
+login and settings are still placeholders.
 
 ## Screens
 
@@ -22,8 +23,10 @@ Result open as stack screens.
 ```powershell
 cd mobile
 flutter pub get
-flutter run
+flutter run --dart-define=API_BASE=http://10.0.2.2:8000 --dart-define=APP_TOKEN=dev-app-token
 ```
+
+`10.0.2.2` is the host machine as seen from the Android emulator.
 
 Web:
 

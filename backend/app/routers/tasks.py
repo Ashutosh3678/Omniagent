@@ -12,7 +12,7 @@ from app.models import CreateTaskRequest, Task, TaskPublic
 from app.store import store
 from app.ws import fail_if_timed_out, send_task
 
-router = APIRouter(prefix="/v1/tasks", tags=["tasks"])
+router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
 
 
 @router.post("", response_model=TaskPublic, status_code=status.HTTP_201_CREATED)

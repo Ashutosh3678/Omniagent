@@ -90,7 +90,7 @@ class TaskPublic(BaseModel):
             status=task.status,
             logs=task.logs,
             steps=task.steps,
-            screenshot_url=f"/v1/tasks/{task.id}/screenshot" if task.screenshot_id else None,
+            screenshot_url=f"/api/v1/tasks/{task.id}/screenshot" if task.screenshot_id else None,
             summary=task.summary,
             error=task.error,
             created_at=task.created_at,

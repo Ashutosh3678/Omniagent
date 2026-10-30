@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.auth import token_from_header
 from app.config import AGENT_TOKEN, TASK_TIMEOUT_SECONDS
 from app.models import Step
 from app.store import store
@@ -45,9 +46,9 @@ async def fail_if_timed_out(task_id: str) -> None:
         task.log("Task timed out")
 
 
-@router.websocket("/v1/agents/{agent_id}/ws")
-async def agent_socket(websocket: WebSocket, agent_id: str, token: str = "") -> None:
-    if token != AGENT_TOKEN:
+@router.websocket("/api/v1/agents/{agent_id}/ws")
+async def agent_socket(websocket: WebSocket, agent_id: str) -> None:
+    if token_from_header(websocket.headers.get("authorization")) != AGENT_TOKEN:
         await websocket.close(code=4401)
         return
     agent = store.agents.get(agent_id)

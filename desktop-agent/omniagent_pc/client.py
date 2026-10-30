@@ -43,16 +43,16 @@ def _request(method: str, url: str, token: str, payload: dict[str, Any] | None =
 def register_agent(api: str, token: str, name: str, hostname: str) -> str:
     body = _request(
         "POST",
-        f"{api.rstrip('/')}/v1/agents/register",
+        f"{api.rstrip('/')}/api/v1/agents/register",
         token,
         {"name": name, "hostname": hostname},
     )
     return str(body["id"])
 
 
-def _ws_url(api: str, agent_id: str, token: str) -> str:
+def _ws_url(api: str, agent_id: str) -> str:
     base = api.rstrip("/").replace("https://", "wss://").replace("http://", "ws://")
-    return f"{base}/v1/agents/{agent_id}/ws?token={token}"
+    return f"{base}/api/v1/agents/{agent_id}/ws"
 
 
 async def handle_task(ws: Any, message: dict[str, Any]) -> None:
@@ -118,9 +118,11 @@ async def handle_task(ws: Any, message: dict[str, Any]) -> None:
 
 async def run_client(api: str, token: str, name: str, hostname: str) -> None:
     agent_id = register_agent(api, token, name, hostname)
-    url = _ws_url(api, agent_id, token)
+    url = _ws_url(api, agent_id)
     logger.info("Registered %s (%s)", name, agent_id)
-    async with websockets.connect(url) as ws:
+    async with websockets.connect(
+        url, additional_headers={"Authorization": f"Bearer {token}"}
+    ) as ws:
         logger.info("Connected to %s", url)
         async for raw in ws:
             message = json.loads(raw)

@@ -31,7 +31,7 @@ class OmniApi {
       };
 
   Future<List<PcDevice>> listAgents() async {
-    final body = await _get('/v1/agents');
+    final body = await _get('/api/v1/agents');
     return (body as List<dynamic>).map((item) {
       final map = item as Map<String, dynamic>;
       return PcDevice(
@@ -46,31 +46,31 @@ class OmniApi {
   Future<TaskItem> createTask(String instruction, {String? agentId}) async {
     final body = await _send(
       'POST',
-      '/v1/tasks',
+      '/api/v1/tasks',
       {'instruction': instruction, 'agent_id': ?agentId},
     );
     return TaskItem.fromJson(body as Map<String, dynamic>, apiBase: _baseUrl);
   }
 
   Future<TaskItem> getTask(String id) async {
-    final body = await _get('/v1/tasks/$id');
+    final body = await _get('/api/v1/tasks/$id');
     return TaskItem.fromJson(body as Map<String, dynamic>, apiBase: _baseUrl);
   }
 
   Future<List<TaskItem>> listTasks() async {
-    final body = await _get('/v1/tasks');
+    final body = await _get('/api/v1/tasks');
     return (body as List<dynamic>)
         .map((item) => TaskItem.fromJson(item as Map<String, dynamic>, apiBase: _baseUrl))
         .toList();
   }
 
   Future<void> cancelTask(String id) async {
-    await _send('POST', '/v1/tasks/$id/cancel', const {});
+    await _send('POST', '/api/v1/tasks/$id/cancel', const {});
   }
 
   Future<Uint8List?> getScreenshot(String taskId) async {
     final response = await _client.get(
-      Uri.parse('$_baseUrl/v1/tasks/$taskId/screenshot'),
+      Uri.parse('$_baseUrl/api/v1/tasks/$taskId/screenshot'),
       headers: _headers,
     );
     if (response.statusCode == 404) return null;

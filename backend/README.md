@@ -38,13 +38,13 @@ pytest -q
 ## API
 
 - `GET /health`
-- `POST /v1/agents/register` (agent token)
-- `GET /v1/agents` (app token)
-- `WS /v1/agents/{id}/ws?token=...`
-- `POST /v1/tasks` — `{ "instruction": "Open Notepad and type Hello from OmniAgent" }`
-- `GET /v1/tasks`
-- `GET /v1/tasks/{id}`
-- `GET /v1/tasks/{id}/screenshot`
-- `POST /v1/tasks/{id}/cancel`
+- `POST /api/v1/agents/register` (agent token)
+- `GET /api/v1/agents` (app token)
+- `WS /api/v1/agents/{id}/ws?token=...`
+- `POST /api/v1/tasks` — `{ "instruction": "Open Notepad and type Hello from OmniAgent" }`
+- `GET /api/v1/tasks`
+- `GET /api/v1/tasks/{id}`
+- `GET /api/v1/tasks/{id}/screenshot`
+- `POST /api/v1/tasks/{id}/cancel`
 
 Only `open notepad` instructions are accepted. Other commands are rejected.

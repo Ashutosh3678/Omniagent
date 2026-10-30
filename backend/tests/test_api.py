@@ -22,7 +22,7 @@ def test_health() -> None:
 
 def test_unauthorized_app_request() -> None:
     with TestClient(app) as client:
-        response = client.get("/v1/agents")
+        response = client.get("/api/v1/agents")
         assert response.status_code == 401
 
 
@@ -30,7 +30,7 @@ def test_reject_invalid_instruction() -> None:
     with TestClient(app) as client:
         _register_and_connect(client)
         response = client.post(
-            "/v1/tasks",
+            "/api/v1/tasks",
             headers=APP,
             json={"instruction": "run calc.exe"},
         )
@@ -40,13 +40,13 @@ def test_reject_invalid_instruction() -> None:
 def test_disconnected_agent_rejected() -> None:
     with TestClient(app) as client:
         response = client.post(
-            "/v1/agents/register",
+            "/api/v1/agents/register",
             headers=AGENT,
             json={"name": "Office PC", "hostname": "DESKTOP-7K2M"},
         )
         agent_id = response.json()["id"]
         create = client.post(
-            "/v1/tasks",
+            "/api/v1/tasks",
             headers=APP,
             json={"instruction": "Open Notepad and type Hello from OmniAgent", "agent_id": agent_id},
         )
@@ -56,12 +56,12 @@ def test_disconnected_agent_rejected() -> None:
 def test_task_roundtrip_with_connected_agent() -> None:
     with TestClient(app) as client:
         agent_id = _register(client)
-        with client.websocket_connect(f"/v1/agents/{agent_id}/ws?token=dev-agent-token") as ws:
+        with client.websocket_connect(f"/api/v1/agents/{agent_id}/ws", headers={"Authorization": "Bearer dev-agent-token"}) as ws:
             hello = ws.receive_json()
             assert hello["type"] == "hello_ok"
 
             create = client.post(
-                "/v1/tasks",
+                "/api/v1/tasks",
                 headers=APP,
                 json={"instruction": "Open Notepad and type Hello from OmniAgent"},
             )
@@ -86,7 +86,7 @@ def test_task_roundtrip_with_connected_agent() -> None:
                 }
             )
 
-            fetched = client.get(f"/v1/tasks/{inbound['task_id']}", headers=APP).json()
+            fetched = client.get(f"/api/v1/tasks/{inbound['task_id']}", headers=APP).json()
             assert fetched["status"] == "completed"
             assert fetched["screenshot_url"]
             shot = client.get(fetched["screenshot_url"], headers=APP)
@@ -97,16 +97,16 @@ def test_task_roundtrip_with_connected_agent() -> None:
 def test_agent_disconnect_fails_running_task() -> None:
     with TestClient(app) as client:
         agent_id = _register(client)
-        with client.websocket_connect(f"/v1/agents/{agent_id}/ws?token=dev-agent-token") as ws:
+        with client.websocket_connect(f"/api/v1/agents/{agent_id}/ws", headers={"Authorization": "Bearer dev-agent-token"}) as ws:
             ws.receive_json()
             create = client.post(
-                "/v1/tasks",
+                "/api/v1/tasks",
                 headers=APP,
                 json={"instruction": "Open Notepad and type Hello from OmniAgent"},
             )
             task_id = create.json()["id"]
             ws.receive_json()
-        fetched = client.get(f"/v1/tasks/{task_id}", headers=APP).json()
+        fetched = client.get(f"/api/v1/tasks/{task_id}", headers=APP).json()
         assert fetched["status"] == "failed"
         assert fetched["error"] == "Agent disconnected"
 
@@ -114,10 +114,10 @@ def test_agent_disconnect_fails_running_task() -> None:
 def test_failed_result_from_agent() -> None:
     with TestClient(app) as client:
         agent_id = _register(client)
-        with client.websocket_connect(f"/v1/agents/{agent_id}/ws?token=dev-agent-token") as ws:
+        with client.websocket_connect(f"/api/v1/agents/{agent_id}/ws", headers={"Authorization": "Bearer dev-agent-token"}) as ws:
             ws.receive_json()
             create = client.post(
-                "/v1/tasks",
+                "/api/v1/tasks",
                 headers=APP,
                 json={"instruction": "open notepad"},
             )
@@ -130,14 +130,14 @@ def test_failed_result_from_agent() -> None:
                     "error": "Could not open Notepad",
                 }
             )
-            fetched = client.get(f"/v1/tasks/{create.json()['id']}", headers=APP).json()
+            fetched = client.get(f"/api/v1/tasks/{create.json()['id']}", headers=APP).json()
             assert fetched["status"] == "failed"
             assert fetched["error"] == "Could not open Notepad"
 
 
 def _register(client: TestClient) -> str:
     response = client.post(
-        "/v1/agents/register",
+        "/api/v1/agents/register",
         headers=AGENT,
         json={"name": "Office PC", "hostname": "DESKTOP-7K2M"},
     )

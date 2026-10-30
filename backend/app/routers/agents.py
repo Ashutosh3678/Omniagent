@@ -8,7 +8,7 @@ from app.auth import require_agent, require_app
 from app.models import Agent, AgentPublic, RegisterAgentRequest
 from app.store import store
 
-router = APIRouter(prefix="/v1/agents", tags=["agents"])
+router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
 
 @router.post("/register", response_model=AgentPublic)

@@ -28,3 +28,7 @@ dist/
 # OS / editor
 .DS_Store
 *.log
+
+# Local docs and reports (not part of the codebase)
+Omniagent ppts and docs/
+.env
