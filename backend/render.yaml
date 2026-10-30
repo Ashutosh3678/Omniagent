@@ -18,6 +18,8 @@ services:
       - key: OMNIAGENT_JWT_SECRET
         generateValue: true   # a random secret, created once and kept
       - key: OMNIAGENT_DATABASE_URL
-        sync: false           # your Neon connection string; paste it in the dashboard
+        sync: false           # Neon pooled connection string (DATABASE_URL); paste it in the dashboard
+      - key: OMNIAGENT_MIGRATION_DATABASE_URL
+        sync: false           # Neon direct connection string (DATABASE_URL_UNPOOLED), used for migrations
       - key: OMNIAGENT_GROQ_API_KEY
         sync: false           # paste in the dashboard; never stored in git
